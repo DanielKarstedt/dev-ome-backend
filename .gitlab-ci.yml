@@ -1,0 +1,121 @@
+stages:
+  - security
+  - build
+  - test
+  - package
+  - deploy
+
+variables:
+  # Docker-in-Docker configurations
+  FF_NETWORK_PER_BUILD: "true"
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_HOST: "tcp://docker:2376"
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_VERIFY: 1
+  DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+  # Image tags
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+  LATEST_TAG: $CI_REGISTRY_IMAGE:latest
+  BRANCH_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+
+# Security scanning job
+security-scan:
+  stage: security
+  image:
+    name: owasp/dependency-check:latest
+    entrypoint: [""]
+  script:
+    - /usr/share/dependency-check/bin/dependency-check.sh
+      --project "ome"
+      --scan "."
+      --format "ALL"
+      --out "dependency-check-reports"
+      --failOnCVSS 8
+      --enableRetired
+      --suppression suppression.xml || true
+  artifacts:
+    paths:
+      - dependency-check-reports/
+    expire_in: 1 week
+  # No tags specified to allow any runner to pick this up
+
+# Build and test job
+build-test:
+  stage: build
+  image: mcr.microsoft.com/dotnet/sdk:9.0
+  script:
+    - dotnet restore
+    - dotnet build --no-restore --configuration Release
+    - dotnet test --no-build --configuration Release --verbosity normal
+  artifacts:
+    paths:
+      - "**/bin/Release/**/*"
+    expire_in: 1 day
+  needs:
+    - security-scan
+
+# Docker build and push
+docker-build:
+  stage: package
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -f docker/Dockerfile -t $IMAGE_TAG -t $LATEST_TAG -t $BRANCH_TAG .
+    - docker push $IMAGE_TAG
+    - docker push $LATEST_TAG
+    - docker push $BRANCH_TAG
+  needs:
+    - build-test
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "develop"
+
+# Deploy to Staging
+deploy-staging:
+  stage: deploy
+  image: curlimages/curl:latest
+  environment:
+    name: staging
+    url: https://staging.officemadeeasy.eu
+  script:
+    - echo "All previous steps completed successfully"
+    - echo "Waiting 10 seconds before triggering Coolify..."
+    - sleep 10
+    - >
+      curl -X POST "https://coolify.officemadeeasy.eu/api/v1/deploy?uuid=${COOLIFY_WEBHOOK_ID}&force=false" 
+      -H "Authorization: Bearer ${COOLIFY_WEBHOOK_TOKEN}"
+    - >
+      curl -X POST -H 'Content-type: application/json' 
+      --data '{"text":"Deployment to Staging completed successfully for OME Backend!"}' 
+      ${SLACK_WEBHOOK_URL}
+  needs:
+    - docker-build
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+
+# Deploy to Production
+deploy-production:
+  stage: deploy
+  image: curlimages/curl:latest
+  environment:
+    name: production
+    url: https://dev.api.officemadeeasy.eu
+  script:
+    - echo "All previous steps completed successfully"
+    - echo "Waiting 10 seconds before triggering Coolify..."
+    - sleep 10
+    - >
+      curl -X POST "https://coolify.officemadeeasy.eu/api/v1/deploy?uuid=${COOLIFY_WEBHOOK_ID}&force=false" 
+      -H "Authorization: Bearer ${COOLIFY_WEBHOOK_TOKEN}"
+    - >
+      curl -X POST -H 'Content-type: application/json' 
+      --data '{"text":"Deployment to Production completed successfully for OME Backend!"}' 
+      ${SLACK_WEBHOOK_URL}
+  needs:
+    - docker-build
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  
+      

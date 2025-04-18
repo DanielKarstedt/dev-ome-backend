@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <LangVersion>preview</LangVersion>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <Folder Include="Integration\API\" />
+      <Folder Include="Integration\GraphQL\" />
+      <Folder Include="Unit\Core\" />
+      <Folder Include="Unit\Infrastructure\" />
+    </ItemGroup>
+
+</Project>

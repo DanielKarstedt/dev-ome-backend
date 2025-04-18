@@ -1,0 +1,343 @@
+{
+  "id": "multitenant",
+  "realm": "multitenant",
+  "displayName": "Multi-Tenant Application",
+  "displayNameHtml": "<div class=\"kc-logo-text\"><span>Multi-Tenant Application</span></div>",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 5,
+  "defaultRoles": [
+    "uma_authorization",
+    "offline_access"
+  ],
+  "requiredCredentials": [
+    "password"
+  ],
+  "clients": [
+    {
+      "clientId": "multitenant-api",
+      "name": "Multi-Tenant API",
+      "description": "Client für den Zugriff auf die Multi-Tenant API",
+      "rootUrl": "http://localhost:5000",
+      "adminUrl": "http://localhost:5000",
+      "baseUrl": "http://localhost:5000",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "your-client-secret",
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost:5000/*"
+      ],
+      "webOrigins": [
+        "*"
+      ],
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "attributes": {
+        "saml.assertion.signature": "false",
+        "saml.force.post.binding": "false",
+        "saml.multivalued.roles": "false",
+        "saml.encrypt": "false",
+        "saml.server.signature": "false",
+        "saml.server.signature.keyinfo.ext": "false",
+        "exclude.session.state.from.auth.response": "false",
+        "saml_force_name_id_format": "false",
+        "saml.client.signature": "false",
+        "tls.client.certificate.bound.access.tokens": "false",
+        "saml.authnstatement": "false",
+        "display.on.consent.screen": "false",
+        "saml.onetimeuse.condition": "false"
+      },
+      "authenticationFlowBindingOverrides": {},
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "tenant_id",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "role list",
+          "protocol": "saml",
+          "protocolMapper": "saml-role-list-mapper",
+          "consentRequired": false,
+          "config": {
+            "single": "false",
+            "attribute.nameformat": "Basic",
+            "attribute.name": "Role"
+          }
+        },
+        {
+          "name": "client roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "foo",
+            "access.token.claim": "true",
+            "claim.name": "resource_access.${client_id}.roles",
+            "jsonType.label": "String",
+            "multivalued": "true"
+          }
+        },
+        {
+          "name": "realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "foo",
+            "access.token.claim": "true",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true"
+          }
+        },
+        {
+          "name": "audience resolve",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-resolve-mapper",
+          "consentRequired": false,
+          "config": {}
+        }
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "name": "tenant1",
+      "path": "/tenant1",
+      "attributes": {
+        "tenant_id": [
+          "11111111-1111-1111-1111-111111111111"
+        ]
+      }
+    },
+    {
+      "name": "tenant2",
+      "path": "/tenant2",
+      "attributes": {
+        "tenant_id": [
+          "22222222-2222-2222-2222-222222222222"
+        ]
+      }
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "OmeAdmin",
+        "description": "Administrator mit allen Rechten",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "OmeDeputyAdmin",
+        "description": "Stellvertretender Administrator",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "OmeOfficeWorker",
+        "description": "Büro-Mitarbeiter",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "OmeSuperUser",
+        "description": "Super-User mit erweiterten Rechten",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "OmeTechUser",
+        "description": "Technischer Benutzer",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "OmeTechnician",
+        "description": "Techniker",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "OmeTechnicianManager",
+        "description": "Techniker-Manager",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "OmeTrainee",
+        "description": "Auszubildender",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "uma_authorization",
+        "description": "${role_uma_authorization}",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "offline_access",
+        "description": "${role_offline-access}",
+        "composite": false,
+        "clientRole": false
+      }
+    ]
+  },
+  "users": [
+    {
+      "username": "admin_user",
+      "email": "admin@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Admin",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/tenant1"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "11111111-1111-1111-1111-111111111111"
+        ]
+      },
+      "realmRoles": [
+        "OmeAdmin",
+        "offline_access",
+        "uma_authorization"
+      ]
+    },
+    {
+      "username": "tech_user",
+      "email": "tech@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Tech",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "tech123",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/tenant1"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "11111111-1111-1111-1111-111111111111"
+        ]
+      },
+      "realmRoles": [
+        "OmeTechUser",
+        "offline_access",
+        "uma_authorization"
+      ]
+    },
+    {
+      "username": "super_user",
+      "email": "super@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Super",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "super123",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/tenant1"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "11111111-1111-1111-1111-111111111111"
+        ]
+      },
+      "realmRoles": [
+        "OmeSuperUser",
+        "offline_access",
+        "uma_authorization"
+      ]
+    },
+    {
+      "username": "tenant2_admin",
+      "email": "admin2@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Tenant2",
+      "lastName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/tenant2"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "22222222-2222-2222-2222-222222222222"
+        ]
+      },
+      "realmRoles": [
+        "OmeAdmin",
+        "offline_access",
+        "uma_authorization"
+      ]
+    }
+  ]
+}

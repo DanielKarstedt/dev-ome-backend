@@ -1,0 +1,8 @@
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+    <suppress>
+        <notes>False positive für Npgsql.EntityFrameworkCore.PostgreSQL</notes>
+        <packageUrl regex="true">^pkg:generic/Npgsql\.EntityFrameworkCore\.PostgreSQL@9\..*$</packageUrl>
+        <cpe>cpe:/a:postgresql:postgresql</cpe>
+        <cpe>cpe:/a:www-sql_project:www-sql</cpe>
+    </suppress>
+</suppressions>

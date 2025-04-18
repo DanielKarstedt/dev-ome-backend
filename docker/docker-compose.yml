@@ -1,0 +1,31 @@
+﻿version: '3.8'
+
+services:
+  ome.api:
+    image: ${CI_REGISTRY_IMAGE:-ome.api}:${CI_COMMIT_SHA:-latest}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        BUILD_CONFIGURATION: Release
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Host=${DB_HOST};Port=${DB_PORT};Database=${DB_NAME};Username=${DB_USER};Password=${DB_PASSWORD};
+      - Keycloak__BaseUrl=${KEYCLOAK_BASE_URL}
+      - Keycloak__Realm=${KEYCLOAK_REALM}
+      - Keycloak__ClientId=${KEYCLOAK_CLIENT_ID}
+      - Keycloak__ClientSecret=${KEYCLOAK_CLIENT_SECRET}
+      - Keycloak__AdminClientId=${KEYCLOAK_ADMIN_CLIENT_ID}
+      - Keycloak__AdminClientSecret=${KEYCLOAK_ADMIN_CLIENT_SECRET}
+      - Frontend__BaseUrl=${FRONTEND_BASE_URL}
+      - DB_SSL_CA_PATH=/etc/ssl/certs/coolify-ca.crt
+    volumes:
+      - /data/coolify/ssl/coolify-ca.crt:/etc/ssl/certs/coolify-ca.crt:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

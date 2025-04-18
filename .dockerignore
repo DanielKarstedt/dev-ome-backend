@@ -1,0 +1,61 @@
+# .dockerignore für .NET Projekte
+
+# Git
+.git
+.gitignore
+.github
+README.md
+LICENSE
+
+# Docker
+.docker
+docker-compose.yml
+docker-compose.*.yml
+Dockerfile*
+
+# .NET Build Artefakte
+**/bin/
+**/obj/
+**/out/
+**/TestResults/
+**/.vs/
+**/.vscode/
+**/*.user
+**/*.userosscache
+**/*.dbmdl
+**/*.jfm
+**/npm-debug.log
+**/yarn-error.log
+
+# Logs
+**/*.log
+**/logs/
+
+# Konfigurationsdateien und Secrets
+**/*.Development.json
+**/*.Local.json
+**/*.Production.json
+**/.env
+**/.env.*
+**/secrets/
+**/appsettings.*.json
+
+# Build Tools und Konfiguration
+**/.editorconfig
+**/.idea/
+**/.sonarlint/
+coverage/
+sonarqube/
+
+# Node.js (falls im Projekt verwendet)
+**/node_modules/
+**/bower_components/
+
+# Dokumentation
+**/docs/
+
+# Temporäre Dateien
+**/[Tt]emp/
+**/*.tmp
+**/*.swp
+**/*~
