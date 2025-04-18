@@ -60,12 +60,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Coolify
+        id: coolify-deploy
         run: |
-          curl -v -X POST "https://coolify.officemadeeasy.eu/api/v1/deploy?uuid=${{ secrets.COOLIFY_WEBHOOK_ID }}&force=true" \
-          -H "Authorization: Bearer ${{ secrets.COOLIFY_WEBHOOK_TOKEN }}"
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://coolify.officemadeeasy.eu/api/v1/deploy?uuid=${{ secrets.COOLIFY_WEBHOOK_ID }}&force=true" \
+          -H "Authorization: Bearer ${{ secrets.COOLIFY_WEBHOOK_TOKEN }}")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP status code: $HTTP_CODE"
+          echo "Response body: $BODY"
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "Coolify deployment triggered successfully"
+          else
+            echo "Coolify deployment failed"
+            exit 1
+          fi
+
+      - name: Wait for Coolify deployment to complete
+        run: |
+          echo "Waiting for Coolify deployment to complete (60 seconds)..."
+          sleep 60  # Warte 60 Sekunden, damit Coolify das Deployment abschließen kann
 
       - name: Notify Slack (Production)
-        if: github.ref_name == 'main'
+        if: github.ref_name == 'main' && success()
         uses: slackapi/slack-github-action@v1.23.0
         with:
           payload: |
@@ -74,7 +90,7 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
       - name: Notify Slack (Staging)
-        if: github.ref_name == 'develop'
+        if: github.ref_name == 'develop' && success()
         uses: slackapi/slack-github-action@v1.23.0
         with:
           payload: |

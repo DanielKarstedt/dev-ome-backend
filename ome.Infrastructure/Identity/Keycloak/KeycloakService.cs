@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using ome.Core.Interfaces.Services;
@@ -14,14 +15,17 @@ public class KeycloakService: IKeycloakService {
     private readonly KeycloakSettings _settings;
     private readonly ILogger<KeycloakService> _logger;
     private readonly JwtSecurityTokenHandler _tokenHandler;
+    private readonly bool _isDevelopment;
 
     public KeycloakService(
         HttpClient httpClient,
         IConfiguration configuration,
+        IHostEnvironment environment,
         ILogger<KeycloakService> logger) {
         _httpClient = httpClient;
         _logger = logger;
         _tokenHandler = new JwtSecurityTokenHandler();
+        _isDevelopment = environment.IsDevelopment();
 
         // Dynamische Konfigurationsauflösung
         _settings = ResolveCoolifyConfiguration(configuration);
@@ -31,8 +35,10 @@ public class KeycloakService: IKeycloakService {
         _httpClient.DefaultRequestHeaders.Accept.Clear();
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-        // Umfangreiches Logging der Konfiguration
-        LogKeycloakConfiguration();
+        // Nur in Entwicklungsumgebung loggen
+        if (_isDevelopment) {
+            LogKeycloakConfiguration();
+        }
     }
 
     private KeycloakSettings ResolveCoolifyConfiguration(IConfiguration configuration) {
@@ -93,28 +99,22 @@ public class KeycloakService: IKeycloakService {
     }
 
     private void LogKeycloakConfiguration() {
-        // Sicheres Logging ohne sensible Daten
+        // Sicheres Logging ohne sensible Daten - nur in Entwicklungsumgebung
         _logger.LogInformation(
             "Keycloak-Konfiguration: " +
             "BaseUrl={BaseUrl}, " +
             "Realm={Realm}, " +
-            "ClientId={ClientId}, " +
-            "ValidateIssuer={ValidateIssuer}, " +
-            "ValidateAudience={ValidateAudience}",
+            "ClientId={ClientId}",
             _settings.BaseUrl,
             _settings.Realm,
-            _settings.ClientId,
-            _settings.ValidateIssuer,
-            _settings.ValidateAudience
+            _settings.ClientId
         );
     }
 
-// Restliche Klassen (KeycloakSettings, KeycloakTokenResponse, etc.) bleiben unverändert
     /// <summary>
     /// Generiert die Autorisierungs-URL für den OAuth-Flow
     /// </summary>
     public string GetAuthorizationUrl(string redirectUri, string state) {
-        // Korrigierter Pfad ohne "/auth"
         var authUrl = $"{_settings.BaseUrl}/realms/{_settings.Realm}/protocol/openid-connect/auth";
 
         var queryParams = new Dictionary<string, string> {
@@ -137,51 +137,24 @@ public class KeycloakService: IKeycloakService {
         string redirectUri,
         CancellationToken cancellationToken = default) {
         try {
-            // Grundlegende Eingabevalidierung mit Sicherheits-Logging
+            // Grundlegende Eingabevalidierung
             if (string.IsNullOrWhiteSpace(code)) {
-                _logger.LogWarning("Ungültiger Autorisierungscode: Leer oder Whitespace");
                 throw new ArgumentException("Autorisierungscode ist ungültig", nameof(code));
             }
 
             if (string.IsNullOrWhiteSpace(redirectUri)) {
-                _logger.LogWarning("Ungültige Redirect-URI");
                 throw new ArgumentException("Redirect-URI ist erforderlich", nameof(redirectUri));
             }
 
-            // Log partial code for debugging (only first few chars)
-            string codePrefix = code.Length > 4 ? code.Substring(0, 4) + "..." : "...";
-            _logger.LogInformation("Starte Token-Austausch mit Code-Prefix: {CodePrefix}", codePrefix);
-
             var tokenEndpoint = $"{_settings.BaseUrl}/realms/{_settings.Realm}/protocol/openid-connect/token";
 
-            // Sicheres Logging ohne sensible Daten
-            _logger.LogDebug(
-                "Token-Austausch-Konfiguration: Endpoint={TokenEndpoint}, ClientId={ClientId}, RedirectUri={RedirectUri}",
-                tokenEndpoint,
-                _settings.ClientId,
-                redirectUri
-            );
-
-            // Create the form with ACTUAL values (not masked ones)
             var content = new FormUrlEncodedContent(new Dictionary<string, string> {
                 ["grant_type"] = "authorization_code",
                 ["client_id"] = _settings.ClientId,
-                ["client_secret"] = _settings.ClientSecret, // Real secret, not masked
-                ["code"] = code, // Real code, not masked
+                ["client_secret"] = _settings.ClientSecret,
+                ["code"] = code,
                 ["redirect_uri"] = redirectUri
             });
-
-            // Create sanitized version for logging (if needed)
-            var sanitizedValues = new Dictionary<string, string> {
-                ["grant_type"] = "authorization_code",
-                ["client_id"] = _settings.ClientId,
-                ["client_secret"] = "********",
-                ["code"] = "********",
-                ["redirect_uri"] = redirectUri
-            };
-
-            _logger.LogDebug("Sending token request with parameters: {Params}",
-                string.Join(", ", sanitizedValues.Select(kv => $"{kv.Key}={kv.Value}")));
 
             // Retry-Mechanismus mit exponentiellem Backoff
             int maxRetries = 2;
@@ -190,47 +163,25 @@ public class KeycloakService: IKeycloakService {
                 if (retry > 0) {
                     // Exponentieller Backoff
                     int delayMs = (int)Math.Pow(2, retry) * 500;
-
-                    _logger.LogInformation(
-                        "Token-Austausch-Retry {RetryCount}/{MaxRetries}, Verzögerung {DelayMs}ms",
-                        retry, maxRetries, delayMs
-                    );
                     await Task.Delay(delayMs, cancellationToken);
                 }
 
                 try {
                     var response = await _httpClient.PostAsync(tokenEndpoint, content, cancellationToken);
 
-                    // Strukturiertes Logging für Antwort-Status
-                    _logger.LogInformation(
-                        "Token-Austausch-Antwort: StatusCode={StatusCode}",
-                        response.StatusCode
-                    );
-
                     if (!response.IsSuccessStatusCode) {
                         var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-
-                        // Log error content for debugging (be careful with sensitive data)
-                        string safeErrorContent = errorContent;
-
-                        // If error is too large, truncate it
-                        if (safeErrorContent.Length > 500) {
-                            safeErrorContent = safeErrorContent.Substring(0, 500) + "...";
-                        }
-
-                        _logger.LogWarning(
-                            "Token-Austausch fehlgeschlagen: StatusCode={StatusCode}, Error={Error}",
-                            response.StatusCode,
-                            safeErrorContent
-                        );
-
-                        // Nur letzter Retry wirft Exception
+                        
+                        // Nur wenn letzter Retry fehlschlägt, loggen und Exception werfen
                         if (retry == maxRetries) {
+                            _logger.LogError(
+                                "Token-Austausch fehlgeschlagen: StatusCode={StatusCode}",
+                                response.StatusCode
+                            );
                             throw new InvalidOperationException(
-                                $"Token-Austausch nach {maxRetries} Versuchen fehlgeschlagen. Error: {ExtractErrorType(errorContent)}"
+                                $"Token-Austausch nach {maxRetries} Versuchen fehlgeschlagen."
                             );
                         }
-
                         continue; // Nächster Retry
                     }
 
@@ -241,38 +192,22 @@ public class KeycloakService: IKeycloakService {
                     if (tokenResponse == null ||
                         string.IsNullOrEmpty(tokenResponse.AccessToken) ||
                         string.IsNullOrEmpty(tokenResponse.RefreshToken)) {
-                        _logger.LogWarning(
-                            "Ungültige Token-Antwort: AccessToken={AccessTokenStatus}, RefreshToken={RefreshTokenStatus}",
-                            tokenResponse?.AccessToken != null,
-                            tokenResponse?.RefreshToken != null
-                        );
-
+                        
                         if (retry == maxRetries) {
+                            _logger.LogError("Ungültige Token-Antwort erhalten");
                             throw new InvalidOperationException("Ungültige Token-Antwort");
                         }
-
                         continue;
                     }
-
-                    // Erfolgs-Logging mit minimalen Informationen
-                    _logger.LogInformation(
-                        "Token-Austausch erfolgreich: TokenType={TokenType}, Gültig für {ExpiresIn}s",
-                        tokenResponse.TokenType,
-                        tokenResponse.ExpiresIn
-                    );
 
                     return (tokenResponse.AccessToken, tokenResponse.RefreshToken);
                 }
                 catch (HttpRequestException httpEx) {
-                    // Netzwerkfehler-Logging
-                    _logger.LogWarning(
-                        httpEx,
-                        "Netzwerkfehler während Token-Austausch: Retry {Retry}/{MaxRetries}",
-                        retry,
-                        maxRetries
-                    );
-
                     if (retry == maxRetries) {
+                        _logger.LogError(
+                            httpEx,
+                            "Netzwerkfehler während Token-Austausch"
+                        );
                         throw;
                     }
                 }
@@ -281,20 +216,16 @@ public class KeycloakService: IKeycloakService {
             throw new InvalidOperationException("Token-Austausch nach Retries fehlgeschlagen");
         }
         catch (Exception ex) {
-            // Generische Fehler-Logging-Strategie
             _logger.LogError(
                 ex,
-                "Unerwarteter Fehler beim Token-Austausch: Typ={ExceptionType}",
-                ex.GetType().Name
+                "Fehler beim Token-Austausch"
             );
             throw;
         }
     }
 
-// Hilfsmethode zur Extraktion des Fehlertyps
     private static string ExtractErrorType(string errorContent) {
         try {
-            // Versuche, den Fehlertyp zu extrahieren, ohne sensible Daten zu loggen
             var errorDict = JsonSerializer.Deserialize<Dictionary<string, string>>(errorContent);
             return errorDict?.GetValueOrDefault("error", "UnbekannterFehler") ?? "UnbekannterFehler";
         }
@@ -310,9 +241,6 @@ public class KeycloakService: IKeycloakService {
         string refreshToken,
         CancellationToken cancellationToken = default) {
         try {
-            _logger.LogDebug("Refreshing token");
-
-            // Korrigierter Pfad ohne "/auth"
             var tokenEndpoint = $"{_settings.BaseUrl}/realms/{_settings.Realm}/protocol/openid-connect/token";
 
             var content = new FormUrlEncodedContent(new Dictionary<string, string> {
@@ -325,22 +253,17 @@ public class KeycloakService: IKeycloakService {
             var response = await _httpClient.PostAsync(tokenEndpoint, content, cancellationToken);
 
             if (!response.IsSuccessStatusCode) {
-                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-
-                _logger.LogWarning("Token refresh failed. Status code: {StatusCode}, Error: {Error}",
-                    response.StatusCode, errorContent);
-                throw new InvalidOperationException($"Token refresh failed: {response.StatusCode}");
+                _logger.LogError("Token-Aktualisierung fehlgeschlagen: StatusCode={StatusCode}", response.StatusCode);
+                throw new InvalidOperationException($"Token-Aktualisierung fehlgeschlagen");
             }
 
             var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
             var tokenResponse = JsonSerializer.Deserialize<KeycloakTokenResponse>(responseJson);
 
-            _logger.LogInformation("Token refresh successful");
-
             return tokenResponse!.AccessToken;
         }
         catch (Exception ex) {
-            _logger.LogError(ex, "Error during token refresh");
+            _logger.LogError(ex, "Fehler bei Token-Aktualisierung");
             throw;
         }
     }
@@ -352,9 +275,6 @@ public class KeycloakService: IKeycloakService {
         string refreshToken,
         CancellationToken cancellationToken = default) {
         try {
-            _logger.LogDebug("Logging out user");
-
-            // Korrigierter Pfad ohne "/auth"
             var logoutEndpoint = $"{_settings.BaseUrl}/realms/{_settings.Realm}/protocol/openid-connect/logout";
 
             var content = new FormUrlEncodedContent(new Dictionary<string, string> {
@@ -365,25 +285,16 @@ public class KeycloakService: IKeycloakService {
 
             var response = await _httpClient.PostAsync(logoutEndpoint, content, cancellationToken);
 
-            if (!response.IsSuccessStatusCode) {
-                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-
-                _logger.LogWarning("Logout failed. Status code: {StatusCode}, Error: {Error}",
-                    response.StatusCode, errorContent);
-                // Wir werfen hier keine Exception, da der Logout-Vorgang nicht kritisch ist
+            if (!response.IsSuccessStatusCode && _isDevelopment) {
+                _logger.LogWarning("Logout nicht erfolgreich: {StatusCode}", response.StatusCode);
             }
-
-            _logger.LogInformation("Logout successful");
         }
         catch (Exception ex) {
-            _logger.LogError(ex, "Error during logout");
-            // Wir werfen hier keine Exception, da der Logout-Vorgang nicht kritisch ist
+            // Nur als Warnung loggen, da Logout nicht kritisch ist
+            _logger.LogWarning(ex, "Fehler beim Logout");
         }
     }
 
-    /// <summary>
-    /// Validiert ein Token
-    /// </summary>
     /// <summary>
     /// Validiert ein Token
     /// </summary>
@@ -391,8 +302,6 @@ public class KeycloakService: IKeycloakService {
         string token,
         CancellationToken cancellationToken = default) {
         try {
-            _logger.LogDebug("Validating token");
-
             var baseUrl = _settings.BaseUrl;
             var realm = _settings.Realm;
             var clientId = _settings.ClientId;
@@ -402,18 +311,10 @@ public class KeycloakService: IKeycloakService {
             // Hole die JWKS-URL
             var jwksEndpoint = $"{baseUrl}/realms/{realm}/protocol/openid-connect/certs";
 
-            _logger.LogInformation("JWKS Endpoint: {Endpoint}", jwksEndpoint);
-
             var jwksResponse = await _httpClient.GetAsync(jwksEndpoint, cancellationToken);
 
             if (!jwksResponse.IsSuccessStatusCode) {
-                var responseBody = await jwksResponse.Content.ReadAsStringAsync(cancellationToken);
-
-                _logger.LogWarning(
-                    "Failed to retrieve JWKS. Status code: {StatusCode}, Response: {ResponseBody}",
-                    jwksResponse.StatusCode,
-                    responseBody
-                );
+                _logger.LogError("JWKS-Abruf fehlgeschlagen: {StatusCode}", jwksResponse.StatusCode);
                 return false;
             }
 
@@ -421,14 +322,12 @@ public class KeycloakService: IKeycloakService {
             var jwks = JsonSerializer.Deserialize<JsonWebKeySet>(jwksJson);
 
             if (jwks?.Keys == null || !jwks.Keys.Any()) {
-                _logger.LogWarning("No valid keys found in JWKS");
+                _logger.LogError("Keine gültigen Schlüssel in JWKS gefunden");
                 return false;
             }
 
             // Konvertiere JWKS-Schlüssel zu Microsoft.IdentityModel.Tokens.SecurityKey
             var securityKeys = jwks.Keys.Select(key => {
-                _logger.LogInformation($"Processing Key: KID={key.KeyId}, Alg={key.Algorithm}");
-
                 try {
                     // Konvertiere Base64-kodierte Modulus und Exponent
                     var modulusBytes = Base64UrlEncoder.DecodeBytes(key.Modulus);
@@ -445,18 +344,10 @@ public class KeycloakService: IKeycloakService {
                         KeyId = key.KeyId
                     };
                 }
-                catch (Exception ex) {
-                    _logger.LogError(ex, $"Fehler bei Schlüssel-Konvertierung für Key ID {key.KeyId}");
+                catch {
                     return null;
                 }
             }).Where(k => k != null).ToList();
-
-            _logger.LogInformation($"Konvertierte Schlüssel: {securityKeys.Count}");
-
-            // Token für Debugging extrahieren
-            var jwtToken = _tokenHandler.ReadJwtToken(token);
-            var tokenKeyId = jwtToken.Header.Kid;
-            _logger.LogInformation($"Token Key ID: {tokenKeyId}");
 
             var validationParameters = new TokenValidationParameters {
                 ValidateIssuer = validateIssuer,
@@ -477,31 +368,24 @@ public class KeycloakService: IKeycloakService {
 
                 // Zusätzliche Prüfungen
                 if (validatedToken == null) {
-                    _logger.LogWarning("Token validation resulted in null validated token");
                     return false;
                 }
 
                 // Prüfe Ablaufzeit mit zusätzlicher Sicherheitsmarge
                 var utcNow = DateTime.UtcNow;
 
-                var isValid = validatedToken.ValidFrom <= utcNow &&
-                              validatedToken.ValidTo > utcNow.AddMinutes(-1);
-
-                if (!isValid) {
-                    _logger.LogWarning("Token is expired or not yet valid");
-                    return false;
-                }
-
-                return true;
+                return validatedToken.ValidFrom <= utcNow &&
+                       validatedToken.ValidTo > utcNow.AddMinutes(-1);
             }
             catch (Exception ex) {
-                _logger.LogWarning(ex, "Token validation failed");
-                _logger.LogWarning($"Exception Details: {ex.Message}");
+                if (_isDevelopment) {
+                    _logger.LogWarning(ex, "Token-Validierung fehlgeschlagen");
+                }
                 return false;
             }
         }
         catch (Exception ex) {
-            _logger.LogError(ex, "Unexpected error during token validation");
+            _logger.LogError(ex, "Unerwarteter Fehler bei Token-Validierung");
             return false;
         }
     }
@@ -513,28 +397,23 @@ public class KeycloakService: IKeycloakService {
         string token,
         CancellationToken cancellationToken = default) {
         try {
-            _logger.LogDebug("Extracting tenant ID from token");
-
             var jwtToken = _tokenHandler.ReadJwtToken(token);
 
             // Suche nach dem Tenant-Claim
             var tenantClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == "tenant_id" || c.Type == "tenantId");
 
             if (tenantClaim == null) {
-                _logger.LogWarning("No tenant ID claim found in token");
                 return Task.FromResult(Guid.Empty);
             }
 
             if (Guid.TryParse(tenantClaim.Value, out var tenantId)) {
-                _logger.LogInformation("Extracted tenant ID {TenantId} from token", tenantId);
                 return Task.FromResult(tenantId);
             }
 
-            _logger.LogWarning("Invalid tenant ID format in token: {TenantId}", tenantClaim.Value);
             return Task.FromResult(Guid.Empty);
         }
         catch (Exception ex) {
-            _logger.LogError(ex, "Error extracting tenant ID from token");
+            _logger.LogError(ex, "Fehler beim Extrahieren der Tenant-ID aus Token");
             return Task.FromResult(Guid.Empty);
         }
     }
@@ -544,8 +423,6 @@ public class KeycloakService: IKeycloakService {
     /// </summary>
     public Task<TokenInfo> GetTokenInfoAsync(string token, CancellationToken cancellationToken = default) {
         try {
-            _logger.LogDebug("Extracting token information");
-
             var jwtToken = _tokenHandler.ReadJwtToken(token);
 
             var tokenInfo = new TokenInfo {
@@ -560,7 +437,7 @@ public class KeycloakService: IKeycloakService {
             return Task.FromResult(tokenInfo);
         }
         catch (Exception ex) {
-            _logger.LogError(ex, "Error extracting token information");
+            _logger.LogError(ex, "Fehler beim Extrahieren von Token-Informationen");
             throw;
         }
     }

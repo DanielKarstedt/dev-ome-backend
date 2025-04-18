@@ -38,7 +38,6 @@
     <ItemGroup>
       <Folder Include="Interfaces\GraphQL\" />
       <Folder Include="Interfaces\WebSocket\" />
-      <Folder Include="Migrations\" />
     </ItemGroup>
 
 </Project>
