@@ -10,9 +10,8 @@ namespace ome.Infrastructure.Identity.Services;
 public class TenantService(
     IHttpContextAccessor httpContextAccessor,
     ILogger<TenantService> logger,
-    ApplicationDbContext dbContext)
+    IDbContextFactory<ApplicationDbContext> dbContextFactory)
     : ITenantService {
-
     public Guid GetCurrentTenantId()
     {
         try 
@@ -68,6 +67,8 @@ public class TenantService(
         if (tenantId == Guid.Empty)
             return null;
 
+        // Hier DbContext über Factory erstellen
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         return await dbContext.Tenants
             .AsNoTracking()
             .FirstOrDefaultAsync(t => 
@@ -79,6 +80,8 @@ public class TenantService(
 
     public async Task<string?> GetConnectionStringAsync(Guid tenantId, CancellationToken cancellationToken = default)
     {
+        // Hier DbContext über Factory erstellen
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var tenant = await dbContext.Tenants
             .AsNoTracking()
             .FirstOrDefaultAsync(t => 
@@ -92,6 +95,8 @@ public class TenantService(
 
     public async Task<bool> TenantExistsAsync(Guid tenantId, CancellationToken cancellationToken = default)
     {
+        // Hier DbContext über Factory erstellen
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         return await dbContext.Tenants
             .AsNoTracking()
             .AnyAsync(t => 
@@ -115,6 +120,8 @@ public class TenantService(
             return await TenantExistsAsync(tenantId, cancellationToken);
         }
 
+        // Hier DbContext über Factory erstellen
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         // Suche nach Tenant mit Name oder DisplayName
         var normalizedCompanyId = companyId.ToUpperInvariant();
         var tenant = await dbContext.Tenants

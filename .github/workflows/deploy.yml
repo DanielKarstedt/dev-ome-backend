@@ -40,6 +40,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set lowercase image name
+        id: prep
+        run: echo "REPO_NAME=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
@@ -47,9 +51,9 @@ jobs:
           file: ./docker/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ env.REPO_NAME }}/dev-ome-backend:${{ github.sha }}
+            ghcr.io/${{ env.REPO_NAME }}/dev-ome-backend:latest
+            ghcr.io/${{ env.REPO_NAME }}/dev-ome-backend:${{ github.ref_name }}
 
   deploy:
     needs: docker
@@ -60,12 +64,12 @@ jobs:
           curl -v -X POST "https://coolify.officemadeeasy.eu/api/v1/deploy?uuid=${{ secrets.COOLIFY_WEBHOOK_ID }}&force=true" \
           -H "Authorization: Bearer ${{ secrets.COOLIFY_WEBHOOK_TOKEN }}"
 
-      - name: Notify Slack
+      - name: Notify Slack (Production)
         if: github.ref_name == 'main'
         uses: slackapi/slack-github-action@v1.23.0
         with:
           payload: |
-            {"text":"Deployment to Production completed successfully for OME Backend!"}
+            {"text":"✅ Deployment to *Production* completed successfully for OME Backend!"}
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
@@ -74,8 +78,6 @@ jobs:
         uses: slackapi/slack-github-action@v1.23.0
         with:
           payload: |
-            {"text":"Deployment to Staging completed successfully for OME Backend!"}
+            {"text":"🚀 Deployment to *Staging* completed successfully for OME Backend!"}
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          
-          
