@@ -34,9 +34,29 @@ public class ApplicationDbContextFactory : IDesignTimeDbContextFactory<Applicati
 
         var optionsBuilder = new DbContextOptionsBuilder<ApplicationDbContext>();
 
-        // Use PostgreSQL
-        optionsBuilder.UseNpgsql(connectionString,
-            options => options.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName));
+        // Use PostgreSQL with robust configuration matching the Program.cs approach
+        optionsBuilder.UseNpgsql(
+            connectionString,
+            npgsqlOptions => {
+                // Migrations Assembly
+                npgsqlOptions.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
+
+                // Retry mechanism
+                npgsqlOptions.EnableRetryOnFailure(
+                    maxRetryCount: 5,
+                    maxRetryDelay: TimeSpan.FromSeconds(30),
+                    errorCodesToAdd: null
+                );
+
+                // Performance & Stability Optimizations
+                npgsqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+                npgsqlOptions.CommandTimeout(120); // 2 minutes timeout
+            }
+        );
+
+        // Enable sensitive data logging and detailed errors for design-time
+        optionsBuilder.EnableSensitiveDataLogging();
+        optionsBuilder.EnableDetailedErrors();
 
         // Use the constructor that takes only DbContextOptions
         return new ApplicationDbContext(optionsBuilder.Options);
