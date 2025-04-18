@@ -48,7 +48,21 @@ public class Program {
         builder.Host.UseSerilog();
     }
 
-    private static void ConfigureDatabaseOptions(IServiceProvider sp, DbContextOptionsBuilder options) {
+   private static bool _isDatabaseConfigured;
+private static readonly Lock LockObject = new Lock();
+
+private static void ConfigureDatabaseOptions(IServiceProvider sp, DbContextOptionsBuilder options) {
+    lock (LockObject) {
+        if (_isDatabaseConfigured) {
+            return;
+        }
+    }
+
+    lock (LockObject) {
+        if (_isDatabaseConfigured) {
+            return;
+        }
+
         var configuration = sp.GetRequiredService<IConfiguration>();
         var environment = sp.GetRequiredService<IHostEnvironment>();
         var logger = sp.GetRequiredService<ILogger<Program>>();
@@ -110,12 +124,14 @@ public class Program {
             }
 
             logger.LogInformation("Datenbankverbindung erfolgreich konfiguriert");
+            _isDatabaseConfigured = true;
         }
         catch (Exception ex) {
             logger.LogCritical(ex, "Kritischer Fehler bei Datenbankverbindungskonfiguration");
             throw;
         }
     }
+}
 
 
     private static void AddCustomInterceptors(IServiceProvider sp, DbContextOptionsBuilder options) {
