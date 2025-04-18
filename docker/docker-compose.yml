@@ -23,6 +23,9 @@ services:
     volumes:
       - /data/coolify/ssl/coolify-ca.crt:/etc/ssl/certs/coolify-ca.crt:ro
     restart: unless-stopped
+    labels:
+      - "caddy=dev.api.officemadeeasy.eu"
+      - "caddy.reverse_proxy=:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/api/health || exit 1"]
       interval: 30s
