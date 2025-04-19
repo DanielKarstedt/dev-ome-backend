@@ -154,13 +154,13 @@ public class Program
         }
     }
 
-    private static bool _interceptorsConfigured = false;
-    private static readonly object _interceptorLock = new object();
+    private static bool _interceptorsConfigured;
+    private static readonly Lock InterceptorLock = new();
 
     private static void AddCustomInterceptors(IServiceProvider sp, DbContextOptionsBuilder options) 
     {
         // Only configure interceptors once using a lock and flag
-        lock (_interceptorLock)
+        lock (InterceptorLock)
         {
             if (_interceptorsConfigured)
             {
@@ -285,8 +285,8 @@ public class Program
 
             // 9. Interceptors
             Log.Information("Registriere Datenbank-Interceptors...");
-            builder.Services.AddScoped<AuditSaveChangesInterceptor>();
-            builder.Services.AddScoped<TenantSaveChangesInterceptor>();
+            builder.Services.AddSingleton<AuditSaveChangesInterceptor>();
+            builder.Services.AddSingleton<TenantSaveChangesInterceptor>();
 
             // 10. DbContext konfigurieren
             Log.Information("Konfiguriere Datenbankkontext...");
