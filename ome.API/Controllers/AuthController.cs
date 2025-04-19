@@ -1,7 +1,10 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using System.Web;
+using HotChocolate.Authorization;
+using Microsoft.AspNetCore.Authentication;
 using ome.API.GraphQL.Interfaces;
 using ome.Core.Interfaces.Services;
 
@@ -18,11 +21,15 @@ public class AuthController(
     IConfiguration configuration)
     : ControllerBase {
     /// <summary>
-    /// Generates a login URL for Keycloak authentication
+    /// Generiert eine Login-URL für Keycloak-Authentifizierung
     /// </summary>
-    /// <param name="redirectUri">Optional redirect URI after successful login</param>
-    /// <returns>Login URL details</returns>
+    /// <param name="redirectUri">Optionale Weiterleitungs-URI nach erfolgreicher Anmeldung</param>
+    /// <returns>Weiterleitung zur Keycloak-Login-Seite</returns>
+    /// <response code="302">Weiterleitung zur Keycloak-Login-Seite</response>
+    /// <response code="500">Fehler bei der Generierung der Login-URL</response>
     [HttpGet("login")]
+    [ProducesResponseType(StatusCodes.Status302Found)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public IActionResult GenerateLoginUrl([FromQuery] string redirectUri = "/dashboard") {
         try {
             logger.LogInformation("Generating Keycloak login URL with redirect: {RedirectUri}", redirectUri);
@@ -67,12 +74,18 @@ public class AuthController(
     }
 
     /// <summary>
-    /// Handles OAuth callback from Keycloak
+    /// Verarbeitet OAuth-Callback von Keycloak nach erfolgreicher Authentifizierung
     /// </summary>
-    /// <param name="code">Authorization code from Keycloak</param>
-    /// <param name="state">State parameter for CSRF protection</param>
-    /// <returns>Authentication result</returns>
+    /// <param name="code">Autorisierungscode von Keycloak</param>
+    /// <param name="state">State-Parameter für CSRF-Schutz</param>
+    /// <returns>Weiterleitung zum Frontend mit Authentifizierungsinformationen</returns>
+    /// <response code="302">Erfolgreiche Authentifizierung, Weiterleitung zum Frontend</response>
+    /// <response code="400">Ungültige Anfrageparameter</response>
+    /// <response code="500">Fehler bei der Verarbeitung der Authentifizierung</response>
     [HttpGet("callback")]
+    [ProducesResponseType(StatusCodes.Status302Found)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> Callback([FromQuery] string code, [FromQuery] string state) {
         try {
             // Validate input parameters
@@ -180,9 +193,72 @@ public class AuthController(
     }
 
     /// <summary>
+    /// Meldet den aktuellen Benutzer ab
+    /// </summary>
+    /// <returns>Weiterleitung zur Login-Seite</returns>
+    /// <response code="302">Erfolgreiche Abmeldung, Weiterleitung zur Login-Seite</response>
+    [HttpGet("logout")]
+    [ProducesResponseType(StatusCodes.Status302Found)]
+    [Authorize]
+    public async Task<IActionResult> Logout() {
+        try {
+            logger.LogInformation("Benutzer wird abgemeldet");
+
+            // 1. Cookie-Authentifizierung beenden
+            await HttpContext.SignOutAsync("Cookies");
+
+            // 2. Session-Cookies löschen
+            foreach (var cookie in Request.Cookies.Keys) {
+                Response.Cookies.Delete(cookie);
+            }
+
+            // 3. Lokale Verbindungen trennen
+            // Hier könnten WebSocket-Verbindungen getrennt werden
+
+            logger.LogInformation("Benutzer erfolgreich abgemeldet");
+
+            // 4. Zur Login-Seite weiterleiten
+            var frontendBaseUrl = configuration["Frontend:BaseUrl"] ?? "https://localhost:3000";
+            var loginUrl = $"{frontendBaseUrl.TrimEnd('/')}/login";
+
+            logger.LogInformation("Leite zur Login-Seite weiter: {LoginUrl}", loginUrl);
+            return Redirect(loginUrl);
+        }
+        catch (Exception ex) {
+            logger.LogError(ex, "Fehler beim Abmelden: {ErrorMessage}", ex.Message);
+
+            // Zur Sicherheit trotzdem zur Login-Seite weiterleiten
+            var frontendBaseUrl = configuration["Frontend:BaseUrl"] ?? "https://localhost:3000";
+            return Redirect($"{frontendBaseUrl.TrimEnd('/')}/login?error=logout_failed");
+        }
+    }
+
+    /// <summary>
+    /// Prüft, ob der aktuelle Benutzer authentifiziert ist
+    /// </summary>
+    /// <returns>Status der Authentifizierung</returns>
+    /// <response code="200">Erfolgreiche Statusprüfung</response>
+    [HttpGet("status")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult GetAuthStatus() {
+        var isAuthenticated = HttpContext.User.Identity?.IsAuthenticated ?? false;
+        var userId = HttpContext.User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var username = HttpContext.User.FindFirstValue(ClaimTypes.Name);
+
+        logger.LogInformation("Auth-Status für Benutzer {UserId}: IsAuthenticated={IsAuthenticated}",
+            userId ?? "unknown", isAuthenticated);
+
+        return Ok(new {
+            IsAuthenticated = isAuthenticated,
+            UserId = userId,
+            Username = username
+        });
+    }
+
+    /// <summary>
     /// Handles authentication failure with appropriate logging and redirection
     /// </summary>
-    private IActionResult HandleAuthenticationFailure(TokenExchangeResult result) {
+    public IActionResult HandleAuthenticationFailure(TokenExchangeResult result) {
         var frontendBaseUrl = configuration["Frontend:BaseUrl"] ?? "https://localhost:3000";
         var errorMessage = result.ErrorType ?? "auth_failed";
 
@@ -192,113 +268,155 @@ public class AuthController(
     }
 
     /// <summary>
-    /// Processes successful authentication after token exchange
+    /// Verarbeitet erfolgreiche Authentifizierung nach Token-Exchange
     /// </summary>
+    /// <param name="accessToken">Access Token von Keycloak</param>
+    /// <param name="refreshToken">Refresh Token von Keycloak</param>
+    /// <param name="redirectPath">Pfad für Weiterleitung nach Authentifizierung</param>
+    /// <returns>Weiterleitungs-Action</returns>
     private async Task<IActionResult> ProcessSuccessfulAuthentication(
         string accessToken,
         string refreshToken,
         string redirectPath) {
         try {
-            // JWT Token decoding and claims extraction
+            logger.LogInformation("Verarbeite erfolgreiche Authentifizierung");
+
+            // JWT Token dekodieren und Claims extrahieren
             var jwtHandler = new JwtSecurityTokenHandler();
             var jwtToken = jwtHandler.ReadJwtToken(accessToken);
 
-            // Extract user identifier
+            // Extrahiere Benutzer-Identifier
             var userIdentifier = jwtToken.Claims.FirstOrDefault(c => c.Type == "sub")?.Value;
+            var username = jwtToken.Claims.FirstOrDefault(c => c.Type == "preferred_username")?.Value;
+            var email = jwtToken.Claims.FirstOrDefault(c => c.Type == "email")?.Value;
 
             if (string.IsNullOrEmpty(userIdentifier)) {
-                logger.LogWarning("No user ID (sub) found in token");
+                logger.LogWarning("Keine Benutzer-ID (sub) im Token gefunden");
 
                 return HandleAuthenticationFailure(new TokenExchangeResult {
                     IsSuccessful = false,
                     ErrorType = "NoUserId",
-                    ErrorDescription = "User identifier not found in token"
+                    ErrorDescription = "Benutzer-ID nicht im Token gefunden"
                 });
             }
 
-            // Extract company ID - supports multiple claim types
+            logger.LogInformation("Benutzer-ID: {UserId}, Username: {Username}, E-Mail: {Email}",
+                userIdentifier, username ?? "unbekannt", email ?? "unbekannt");
+
+            // Extrahiere Company ID - unterstützt mehrere Claim-Typen
             var companyId = jwtToken.Claims.FirstOrDefault(c => c.Type == "company")?.Value
-                            ?? jwtToken.Claims.FirstOrDefault(c => c.Type == "groups")?.Value;
+                            ?? jwtToken.Claims.FirstOrDefault(c => c.Type == "tenant_id")?.Value;
+
+            // Wenn keine direkte Company-ID gefunden wurde, versuche aus Gruppen zu extrahieren
+            if (string.IsNullOrEmpty(companyId)) {
+                var groups = jwtToken.Claims.Where(c => c.Type == "groups").Select(c => c.Value).ToList();
+                logger.LogInformation("Gefundene Gruppen: {Groups}", string.Join(", ", groups));
+
+                // Suche nach tenant:xxx Gruppe
+                var tenantGroup =
+                    groups.FirstOrDefault(g => g.StartsWith("tenant:", StringComparison.OrdinalIgnoreCase));
+
+                if (!string.IsNullOrEmpty(tenantGroup)) {
+                    companyId = tenantGroup.Split(':').LastOrDefault();
+                    logger.LogInformation("Company-ID aus Gruppe extrahiert: {CompanyId}", companyId);
+                }
+            }
 
             if (string.IsNullOrEmpty(companyId)) {
-                logger.LogWarning("No company ID found for user");
+                logger.LogWarning("Keine Company-ID für Benutzer gefunden");
 
-                return HandleAuthenticationFailure(new TokenExchangeResult {
-                    IsSuccessful = false,
-                    ErrorType = "NoCompanyId",
-                    ErrorDescription = "Company identifier not found in token"
-                });
+                // Alternative: Verwende den Realm-Namen als Fallback (für Single-Tenant-Anwendungen)
+                var realmName = jwtToken.Claims.FirstOrDefault(c => c.Type == "azp")?.Value;
+
+                if (!string.IsNullOrEmpty(realmName)) {
+                    companyId = realmName;
+                    logger.LogInformation("Verwende Realm-Namen als Company-ID: {CompanyId}", companyId);
+                }
+                else {
+                    return HandleAuthenticationFailure(new TokenExchangeResult {
+                        IsSuccessful = false,
+                        ErrorType = "NoCompanyId",
+                        ErrorDescription = "Keine Company-ID im Token gefunden"
+                    });
+                }
             }
 
-            // Handle company ID in path format
+            // Behandle Company-ID im Pfad-Format
             if (companyId.Contains('/')) {
                 var originalCompanyId = companyId;
                 companyId = companyId.Split("/").LastOrDefault() ?? companyId;
 
-                logger.LogInformation("Extracted company ID from path: {OriginalId} -> {ExtractedId}",
+                logger.LogInformation("Company-ID aus Pfad extrahiert: {OriginalId} -> {ExtractedId}",
                     originalCompanyId, companyId);
             }
 
-            // Extract roles
-            var roles = ExtractRolesFromToken(jwtToken);
-            logger.LogInformation("Extracted roles: {Roles}", string.Join(", ", roles));
-
-            // Extract token expiry time
+            // Token-Ablaufzeit extrahieren
             var expiryTimestamp = jwtToken.Claims.FirstOrDefault(c => c.Type == "exp")?.Value;
-            var expiryDate = DateTimeOffset.UtcNow.AddHours(1); // Default: 1 hour
+            var expiryDate = DateTimeOffset.UtcNow.AddHours(1); // Default: 1 Stunde
 
             if (!string.IsNullOrEmpty(expiryTimestamp) && long.TryParse(expiryTimestamp, out var unixTime)) {
                 expiryDate = DateTimeOffset.FromUnixTimeSeconds(unixTime);
-                logger.LogInformation("Token expires at: {ExpiryDate}", expiryDate);
+                logger.LogInformation("Token läuft ab am: {ExpiryDate}", expiryDate);
             }
 
-            // Set authentication cookies
+            // 1. Benutzer mit Cookie-Authentication anmelden
+            logger.LogInformation("Melde Benutzer mit Cookie-Authentication an");
+
+            await SignInUserAsync(userIdentifier, username ?? "unknown", email ?? "unknown@example.com", accessToken,
+                refreshToken);
+
+            // 2. Setze reguläre Auth-Cookies für Abwärtskompatibilität
+            logger.LogInformation("Setze reguläre Auth-Cookies für Abwärtskompatibilität");
             SetAuthCookies(accessToken, refreshToken, userIdentifier, companyId, expiryDate);
 
-            // Attempt to establish secure connections
+            // 3. Versuche, sichere Verbindungen herzustellen
             try {
+                logger.LogInformation("Stelle sichere Verbindungen her");
                 await EstablishSecureConnections(userIdentifier, companyId, accessToken, refreshToken);
-                logger.LogInformation("Secure connections successfully established");
+                logger.LogInformation("Sichere Verbindungen erfolgreich hergestellt");
             }
             catch (Exception connEx) {
-                logger.LogWarning(connEx, "Error establishing secure connections: {ErrorMessage}", connEx.Message);
-                // Non-critical error, continue with redirect
+                logger.LogWarning(connEx, "Fehler beim Herstellen sicherer Verbindungen: {ErrorMessage}",
+                    connEx.Message);
+                // Nicht-kritischer Fehler, Weiterleitung trotzdem fortsetzen
             }
 
-            // Prepare redirect URL
+            // 4. Bereite Weiterleitungs-URL vor
             var frontendBaseUrl = configuration["Frontend:BaseUrl"] ?? "https://localhost:3000";
-            logger.LogDebug("Frontend Base URL from configuration: '{FrontendBaseUrl}'", frontendBaseUrl);
+            logger.LogDebug("Frontend-Basis-URL aus Konfiguration: '{FrontendBaseUrl}'", frontendBaseUrl);
 
-            // Replace placeholders in redirectPath with actual values
+            // Ersetze Platzhalter in redirectPath durch tatsächliche Werte
             if (redirectPath.Contains("{companyId}")) {
                 var originalPath = redirectPath;
                 redirectPath = redirectPath.Replace("{companyId}", Uri.EscapeDataString(companyId));
 
-                logger.LogInformation("Replaced companyId in redirect path: {OriginalPath} -> {NewPath}",
+                logger.LogInformation("CompanyId in Weiterleitungspfad ersetzt: {OriginalPath} -> {NewPath}",
                     originalPath, redirectPath);
             }
             else if (!redirectPath.Contains("/dashboard/")) {
-                // If path doesn't include dashboard with company, add it
+                // Wenn Pfad kein Dashboard mit Company enthält, füge es hinzu
                 var originalPath = redirectPath;
                 redirectPath = $"/dashboard/{Uri.EscapeDataString(companyId)}";
 
-                logger.LogInformation("Changed redirect to include company dashboard: {OriginalPath} -> {NewPath}",
+                logger.LogInformation(
+                    "Weiterleitung geändert, um Company-Dashboard einzuschließen: {OriginalPath} -> {NewPath}",
                     originalPath, redirectPath);
             }
 
-            // Build absolute redirect URL
+            // 5. Absolute Weiterleitungs-URL erstellen
             var redirectUrl = BuildRedirectUrl(frontendBaseUrl, redirectPath);
 
-            logger.LogInformation("Redirecting to frontend: {RedirectUrl}", redirectUrl);
+            logger.LogInformation("Leite zum Frontend weiter: {RedirectUrl}", redirectUrl);
             return Redirect(redirectUrl);
         }
         catch (Exception ex) {
-            logger.LogError(ex, "Error during successful authentication processing: {ErrorMessage}", ex.Message);
+            logger.LogError(ex, "Fehler bei der Verarbeitung erfolgreicher Authentifizierung: {ErrorMessage}",
+                ex.Message);
 
             return HandleAuthenticationFailure(new TokenExchangeResult {
                 IsSuccessful = false,
                 ErrorType = "ProcessingError",
-                ErrorDescription = "Failed to process authentication: " + ex.Message
+                ErrorDescription = "Fehler bei der Verarbeitung der Authentifizierung: " + ex.Message
             });
         }
     }
@@ -338,6 +456,72 @@ public class AuthController(
         var finalUrl = $"{frontendBaseUrl}/{redirectPath}";
         logger.LogInformation("Final redirect URL: {Url}", finalUrl);
         return finalUrl;
+    }
+
+    /// <summary>
+    /// Authentifiziert den Benutzer mit Cookie-Authentication
+    /// </summary>
+    /// <param name="userId">Benutzer-ID (sub) aus dem JWT-Token</param>
+    /// <param name="username">Benutzername aus dem JWT-Token</param>
+    /// <param name="email">E-Mail-Adresse aus dem JWT-Token</param>
+    /// <param name="accessToken">Access Token für API-Zugriff</param>
+    /// <param name="refreshToken">Refresh Token für Token-Erneuerung</param>
+    /// <returns>Task für asynchrone Ausführung</returns>
+    private async Task SignInUserAsync(string userId, string username, string email, string accessToken,
+        string refreshToken) {
+        try {
+            logger.LogInformation("Erstelle Claims für Benutzer {UserId}", userId);
+
+            // Erstelle Claims für den Benutzer
+            var claims = new List<Claim> {
+                new(ClaimTypes.NameIdentifier, userId),
+                new(ClaimTypes.Name, username),
+                new(ClaimTypes.Email, email),
+                new("access_token", accessToken),
+                new("refresh_token", refreshToken)
+            };
+
+            // Extrahiere Rollen und Gruppen aus dem Token
+            var jwtHandler = new JwtSecurityTokenHandler();
+            var jwtToken = jwtHandler.ReadJwtToken(accessToken);
+
+            // Extrahiere Rollen aus dem Token
+            var roles = ExtractRolesFromToken(jwtToken);
+            logger.LogInformation("Gefundene Rollen: {Roles}", string.Join(", ", roles));
+
+            claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));
+
+            // Extrahiere Gruppen aus dem Token
+            var groups = jwtToken.Claims
+                .Where(c => c.Type == "groups")
+                .Select(c => c.Value)
+                .ToList();
+
+            logger.LogInformation("Gefundene Gruppen: {Groups}", string.Join(", ", groups));
+
+            claims.AddRange(groups.Select(group => new Claim("groups", group)));
+
+            // Erstelle Identity und Principal
+            var identity = new ClaimsIdentity(claims, "Cookies");
+            var principal = new ClaimsPrincipal(identity);
+
+            // Setze Authentication-Properties
+            var authProperties = new AuthenticationProperties {
+                IsPersistent = true,
+                ExpiresUtc = DateTimeOffset.UtcNow.AddHours(8), // An Token-Ablauf anpassen
+                AllowRefresh = true
+            };
+
+            // Benutzer anmelden
+            logger.LogInformation("Melde Benutzer {Username} mit Cookie-Authentication an", username);
+            await HttpContext.SignInAsync("Cookies", principal, authProperties);
+
+            logger.LogInformation("Benutzer {Username} erfolgreich mit Cookie-Authentication angemeldet", username);
+        }
+        catch (Exception ex) {
+            logger.LogError(ex, "Fehler beim Anmelden des Benutzers {UserId} mit Cookie-Authentication", userId);
+            throw;
+        }
     }
 
     /// <summary>
