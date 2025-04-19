@@ -6,7 +6,8 @@ namespace ome.Core.Domain.Entities.Users {
     /// <summary>
     /// Repräsentiert einen Benutzer im System
     /// </summary>
-    public sealed class User : TenantEntity {
+    public class User : TenantEntity {
+        
         /// <summary>
         /// Keycloak User ID (sub)
         /// </summary>
@@ -45,7 +46,9 @@ namespace ome.Core.Domain.Entities.Users {
         /// <summary>
         /// Liste der Rollen des Benutzers
         /// </summary>
-        public List<UserRole> Roles { get; init; } = [];
+        public virtual List<UserRole> Roles { get; init; } = [];
+
+
 
         /// <summary>
         /// Zeitpunkt des letzten Logins
@@ -61,9 +64,12 @@ namespace ome.Core.Domain.Entities.Users {
             if (!HasRole(role)) {
                 Roles.Add(new UserRole {
                     RoleName = roleString,
+                    UserId = Id,
+                    TenantId = TenantId
                 });
             }
         }
+
 
         /// <summary>
         /// Entfernt eine Rolle vom Benutzer

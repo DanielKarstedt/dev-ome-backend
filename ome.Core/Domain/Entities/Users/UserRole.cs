@@ -20,7 +20,8 @@ public class UserRole: TenantEntity
     /// <summary>
     /// Navigation Property zum Benutzer
     /// </summary>
-    public virtual User? User { get; init; }
+    public virtual User User { get; init; } = null!;
+
     
 }
 

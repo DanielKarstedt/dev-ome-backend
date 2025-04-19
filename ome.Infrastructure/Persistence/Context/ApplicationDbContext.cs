@@ -58,12 +58,17 @@ namespace ome.Infrastructure.Persistence.Context {
             {
                 builder.ToTable("UserRoles");
                 builder.HasKey(ur => ur.Id);
+                
+                // Konfiguration der Eigenschaften
                 builder.Property(ur => ur.UserId).IsRequired();
                 builder.Property(ur => ur.RoleName).IsRequired().HasMaxLength(100);
                 builder.Property(ur => ur.TenantId).IsRequired();
+                
+                builder.Ignore("UserId1");
+
         
                 // Beziehung zum Benutzer definieren
-                builder.HasOne<User>()
+                builder.HasOne(ur => ur.User)
                     .WithMany(u => u.Roles)
                     .HasForeignKey(ur => ur.UserId)
                     .OnDelete(DeleteBehavior.Cascade);
