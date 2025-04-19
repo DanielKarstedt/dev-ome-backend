@@ -22,8 +22,17 @@ using Serilog.Sinks.SystemConsole.Themes;
 
 namespace ome.API;
 
-public class Program {
-    private static void ConfigureLogging(WebApplicationBuilder builder) {
+public class Program 
+{
+    // Startup erfolgreiche Phasen tracken
+    private static bool _databaseMigrated;
+    private static bool _identityConfigured;
+    private static bool _middlewareConfigured;
+    private static bool _controllersConfigured;
+    
+    private static void ConfigureLogging(WebApplicationBuilder builder) 
+    {
+        // Logging-Konfiguration behalten, nur die Ausgabe aufräumen
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Information()
             .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
@@ -48,207 +57,278 @@ public class Program {
         builder.Host.UseSerilog();
     }
 
-   private static bool _isDatabaseConfigured;
-private static readonly Lock LockObject = new Lock();
+    private static bool _isDatabaseConfigured;
+    private static readonly Lock LockObject = new Lock(); // Lock-Object wird als standard object implementiert
 
-private static void ConfigureDatabaseOptions(IServiceProvider sp, DbContextOptionsBuilder options) {
-    lock (LockObject) {
-        if (_isDatabaseConfigured) {
-            return;
-        }
-    }
-
-    lock (LockObject) {
-        if (_isDatabaseConfigured) {
-            return;
-        }
-
-        var configuration = sp.GetRequiredService<IConfiguration>();
-        var environment = sp.GetRequiredService<IHostEnvironment>();
-        var logger = sp.GetRequiredService<ILogger<Program>>();
-
-        try {
-            var connectionString = configuration.GetConnectionString("DefaultConnection");
-
-            connectionString = connectionString?
-                .Replace("${DB_HOST}", Environment.GetEnvironmentVariable("DB_HOST"))
-                .Replace("${DB_PORT}", Environment.GetEnvironmentVariable("DB_PORT"))
-                .Replace("${DB_NAME}", Environment.GetEnvironmentVariable("DB_NAME"))
-                .Replace("${DB_USER}", Environment.GetEnvironmentVariable("DB_USER"))
-                .Replace("${DB_PASSWORD}", Environment.GetEnvironmentVariable("DB_PASSWORD"));
-
-            // Pfad zum Coolify CA-Zertifikat aus Umgebungsvariable oder Standardpfad
-            var caPath = Environment.GetEnvironmentVariable("DB_SSL_CA_PATH");
-
-            if (File.Exists(caPath)) {
-                // Korrekte PostgreSQL-Parameter für SSL mit VerifyFull
-                connectionString += $";SSL Mode=VerifyFull;Root Certificate={caPath}";
-                logger.LogInformation("SSL-Konfiguration mit VerifyFull und Root-CA: {CertPath}", caPath);
+    private static void ConfigureDatabaseOptions(IServiceProvider sp, DbContextOptionsBuilder options) 
+    {
+        lock (LockObject) 
+        {
+            if (_isDatabaseConfigured) 
+            {
+                return;
             }
-            else {
-                logger.LogCritical("CA-Zertifikat nicht gefunden: {CertPath} - Verbindung wird nicht möglich sein",
-                    caPath);
-                throw new FileNotFoundException($"Das Root-CA-Zertifikat wurde nicht gefunden: {caPath}", caPath);
-            }
+        
+            var configuration = sp.GetRequiredService<IConfiguration>();
+            var environment = sp.GetRequiredService<IHostEnvironment>();
+            var logger = sp.GetRequiredService<ILogger<Program>>();
 
-            logger.LogInformation("Verbinde zu PostgreSQL mit Sicherheitsstufe VerifyFull");
+            try 
+            {
+                logger.LogInformation("Starte Datenbank-Konfiguration...");
+                var connectionString = configuration.GetConnectionString("DefaultConnection");
 
-            options.UseNpgsql(
-                connectionString,
-                npgsqlOptions => {
-                    // Migrations-Assembly
-                    npgsqlOptions.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
+                connectionString = connectionString?
+                    .Replace("${DB_HOST}", Environment.GetEnvironmentVariable("DB_HOST"))
+                    .Replace("${DB_PORT}", Environment.GetEnvironmentVariable("DB_PORT"))
+                    .Replace("${DB_NAME}", Environment.GetEnvironmentVariable("DB_NAME"))
+                    .Replace("${DB_USER}", Environment.GetEnvironmentVariable("DB_USER"))
+                    .Replace("${DB_PASSWORD}", Environment.GetEnvironmentVariable("DB_PASSWORD"));
 
-                    // Robuster Retry-Mechanismus
-                    npgsqlOptions.EnableRetryOnFailure(
-                        maxRetryCount: environment.IsDevelopment() ? 3 : 10,
-                        maxRetryDelay: TimeSpan.FromSeconds(environment.IsDevelopment() ? 15 : 60),
-                        errorCodesToAdd: null
-                    );
+                // CA-Zertifikat prüfen und konfigurieren
+                var caPath = Environment.GetEnvironmentVariable("DB_SSL_CA_PATH");
+                logger.LogInformation("Prüfe CA-Zertifikat: {CertPath}", caPath);
 
-                    // Performance & Stability Optimierungen
-                    npgsqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-                    npgsqlOptions.CommandTimeout(120); // 2 Minuten Timeout
+                if (string.IsNullOrEmpty(caPath))
+                {
+                    logger.LogCritical("CA-Zertifikatspfad ist nicht gesetzt (DB_SSL_CA_PATH ist leer)");
+                    throw new ArgumentNullException("DB_SSL_CA_PATH", "CA-Zertifikatspfad ist nicht konfiguriert");
                 }
-            );
 
-            // Entwicklungsumgebung spezifische Konfiguration
-            if (environment.IsDevelopment()) {
-                options.EnableSensitiveDataLogging();
-                options.EnableDetailedErrors();
-                logger.LogInformation("Entwicklungs-Datenbankoptionen aktiviert");
-            }
-            else {
-                // Produktions-Logging-Optimierungen
-                options.EnableDetailedErrors(false);
-            }
+                if (File.Exists(caPath)) 
+                {
+                    // Korrekte PostgreSQL-Parameter für SSL mit VerifyFull
+                    connectionString += $";SSL Mode=VerifyFull;Root Certificate={caPath}";
+                    logger.LogInformation("SSL-Konfiguration mit VerifyFull und Root-CA: {CertPath}", caPath);
+                }
+                else 
+                {
+                    logger.LogCritical("CA-Zertifikat nicht gefunden: {CertPath} - Verbindung wird nicht möglich sein",
+                        caPath);
+                    throw new FileNotFoundException($"Das Root-CA-Zertifikat wurde nicht gefunden: {caPath}", caPath);
+                }
 
-            logger.LogInformation("Datenbankverbindung erfolgreich konfiguriert");
-            _isDatabaseConfigured = true;
-        }
-        catch (Exception ex) {
-            logger.LogCritical(ex, "Kritischer Fehler bei Datenbankverbindungskonfiguration");
-            throw;
+                logger.LogInformation("Verbinde zu PostgreSQL mit Sicherheitsstufe VerifyFull");
+
+                options.UseNpgsql(
+                    connectionString,
+                    npgsqlOptions => 
+                    {
+                        // Migrations-Assembly
+                        npgsqlOptions.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
+
+                        // Robuster Retry-Mechanismus
+                        npgsqlOptions.EnableRetryOnFailure(
+                            maxRetryCount: environment.IsDevelopment() ? 3 : 10,
+                            maxRetryDelay: TimeSpan.FromSeconds(environment.IsDevelopment() ? 15 : 60),
+                            errorCodesToAdd: null
+                        );
+
+                        // Performance & Stability Optimierungen
+                        npgsqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+                        npgsqlOptions.CommandTimeout(120); // 2 Minuten Timeout
+                    }
+                );
+
+                // Entwicklungsumgebung spezifische Konfiguration
+                if (environment.IsDevelopment()) 
+                {
+                    options.EnableSensitiveDataLogging();
+                    options.EnableDetailedErrors();
+                    logger.LogInformation("Entwicklungs-Datenbankoptionen aktiviert");
+                }
+                else 
+                {
+                    // Produktions-Logging-Optimierungen
+                    options.EnableDetailedErrors(false);
+                }
+
+                logger.LogInformation("Datenbankverbindung erfolgreich konfiguriert");
+                _isDatabaseConfigured = true;
+            }
+            catch (Exception ex) 
+            {
+                logger.LogCritical(ex, "Kritischer Fehler bei Datenbankverbindungskonfiguration");
+                throw;
+            }
         }
     }
-}
 
-
-    private static void AddCustomInterceptors(IServiceProvider sp, DbContextOptionsBuilder options) {
-        try {
+    private static void AddCustomInterceptors(IServiceProvider sp, DbContextOptionsBuilder options) 
+    {
+        var logger = sp.GetRequiredService<ILogger<Program>>();
+        logger.LogInformation("Konfiguriere Datenbank-Interceptors...");
+        
+        try 
+        {
             // Versuche die Services zu bekommen, aber akzeptiere wenn sie null sind
             var auditInterceptor = sp.GetService<AuditSaveChangesInterceptor>();
             var tenantInterceptor = sp.GetService<TenantSaveChangesInterceptor>();
 
-            if (auditInterceptor != null) {
+            if (auditInterceptor != null) 
+            {
                 options.AddInterceptors(auditInterceptor);
+                logger.LogInformation("Audit-Interceptor hinzugefügt");
+            }
+            else
+            {
+                logger.LogWarning("Audit-Interceptor konnte nicht geladen werden");
             }
 
-            if (tenantInterceptor != null) {
+            if (tenantInterceptor != null) 
+            {
                 options.AddInterceptors(tenantInterceptor);
+                logger.LogInformation("Tenant-Interceptor hinzugefügt");
+            }
+            else
+            {
+                logger.LogWarning("Tenant-Interceptor konnte nicht geladen werden");
             }
 
-            Log.Information("Interceptors erfolgreich konfiguriert");
+            logger.LogInformation("Interceptors erfolgreich konfiguriert");
         }
-        catch (Exception ex) {
-            Log.Warning(ex, "Fehler bei der Konfiguration der Interceptors");
+        catch (Exception ex) 
+        {
+            logger.LogWarning(ex, "Fehler bei der Konfiguration der Interceptors");
             // Hier keine Exception werfen, damit die Migration durchlaufen kann
         }
     }
 
-    public static async Task Main(string[] args) {
-        var builder = WebApplication.CreateBuilder(args);
+    public static async Task Main(string[] args) 
+    {
+        // Haupt-Logger für Console-Ausgaben vor der Konfiguration
+        Log.Logger = new LoggerConfiguration()
+            .WriteTo.Console()
+            .CreateBootstrapLogger();
+            
         Log.Information("Starte MultiTenant Backend");
-
-        var keycloakConfig = new Dictionary<string, string?> {
-            ["Keycloak:BaseUrl"] = Environment.GetEnvironmentVariable("KEYCLOAK_BASE_URL")
-                                   ?? builder.Configuration["Keycloak:BaseUrl"],
-            ["Keycloak:Realm"] = Environment.GetEnvironmentVariable("KEYCLOAK_REALM")
-                                 ?? builder.Configuration["Keycloak:Realm"],
-            ["Keycloak:ClientId"] = Environment.GetEnvironmentVariable("KEYCLOAK_CLIENT_ID")
-                                    ?? builder.Configuration["Keycloak:ClientId"],
-            ["Keycloak:ClientSecret"] = Environment.GetEnvironmentVariable("KEYCLOAK_CLIENT_SECRET")
-                                        ?? builder.Configuration["Keycloak:ClientSecret"]
-        };
-
-        // Aktualisiere Konfiguration
-        foreach (var config in keycloakConfig.Where(config => !string.IsNullOrEmpty(config.Value))) {
-            builder.Configuration[config.Key] = config.Value;
-        }
-
-        try {
+        
+        try 
+        {
+            var builder = WebApplication.CreateBuilder(args);
+            
+            // 1. Logging konfigurieren
+            Log.Information("Konfiguriere Logging...");
             ConfigureLogging(builder);
+            
+            // 2. Keycloak konfigurieren
+            Log.Information("Konfiguriere Keycloak...");
+            var keycloakConfig = new Dictionary<string, string?> 
+            {
+                ["Keycloak:BaseUrl"] = Environment.GetEnvironmentVariable("KEYCLOAK_BASE_URL")
+                                       ?? builder.Configuration["Keycloak:BaseUrl"],
+                ["Keycloak:Realm"] = Environment.GetEnvironmentVariable("KEYCLOAK_REALM")
+                                     ?? builder.Configuration["Keycloak:Realm"],
+                ["Keycloak:ClientId"] = Environment.GetEnvironmentVariable("KEYCLOAK_CLIENT_ID")
+                                        ?? builder.Configuration["Keycloak:ClientId"],
+                ["Keycloak:ClientSecret"] = Environment.GetEnvironmentVariable("KEYCLOAK_CLIENT_SECRET")
+                                            ?? builder.Configuration["Keycloak:ClientSecret"]
+            };
 
+            foreach (var config in keycloakConfig.Where(config => !string.IsNullOrEmpty(config.Value))) 
+            {
+                builder.Configuration[config.Key] = config.Value;
+                Log.Information("Keycloak-Konfiguration: {Key}={Value}", config.Key, config.Value);
+            }
+
+            // 3. Module laden
+            Log.Information("Lade Modul-Einstellungen...");
             var moduleSettings = builder.Configuration.GetSection("Modules").Get<Dictionary<string, bool>>()
                                  ?? new Dictionary<string, bool>();
-
             Log.Information("Starte MultiTenant Backend mit {ModuleCount} Modulen", moduleSettings.Count);
 
-            // Services registrieren
+            // 4. Core Services registrieren
+            Log.Information("Registriere Core-Services...");
             builder.Services.AddDistributedMemoryCache();
             builder.Services.AddControllers();
             builder.Services.AddHttpContextAccessor();
             builder.Services.AddMemoryCache();
 
-            // Health Checks hinzufügen
+            // 5. Health Checks konfigurieren
+            Log.Information("Konfiguriere Health Checks...");
             builder.Services.AddComprehensiveHealthChecks(builder.Configuration);
 
-            builder.Services.AddSession(options => {
+            // 6. Session-Konfiguration
+            Log.Information("Konfiguriere Session...");
+            builder.Services.AddSession(options => 
+            {
                 options.IdleTimeout = TimeSpan.FromMinutes(30);
                 options.Cookie.HttpOnly = true;
                 options.Cookie.IsEssential = true;
                 options.Cookie.SameSite = SameSiteMode.Lax;
                 options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
             });
+            
+            // 7. Logging-Services
+            Log.Information("Konfiguriere Logging-Services...");
             builder.Services.AddLoggingServices(builder.Configuration);
 
-            // Scoped Services
+            // 8. Scoped Services
+            Log.Information("Registriere Tenant- und Identity-Services...");
             builder.Services.AddScoped<ITenantService, TenantService>();
             builder.Services.AddSingleton<TenantHttpRequestInterceptor>();
             builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
             builder.Services.AddScoped<IKeycloakService, KeycloakService>();
 
-            // Interceptors als Scoped registrieren
+            // 9. Interceptors
+            Log.Information("Registriere Datenbank-Interceptors...");
             builder.Services.AddScoped<AuditSaveChangesInterceptor>();
             builder.Services.AddScoped<TenantSaveChangesInterceptor>();
 
-            // DbContext Konfiguration
-            builder.Services.AddDbContextFactory<ApplicationDbContext>((sp, options) => {
+            // 10. DbContext konfigurieren
+            Log.Information("Konfiguriere Datenbankkontext...");
+            builder.Services.AddDbContextFactory<ApplicationDbContext>((sp, options) => 
+            {
                 ConfigureDatabaseOptions(sp, options);
 
-                try {
-                    // Versuchen die Interceptors zu holen, aber ignorieren wenn nicht verfügbar
+                try 
+                {
                     AddCustomInterceptors(sp, options);
                 }
-                catch (Exception ex) {
-                    Log.Warning(ex,
-                        "Interceptors konnten nicht geladen werden - wird für Design-Time-Context ignoriert");
+                catch (Exception ex) 
+                {
+                    Log.Warning(ex, "Interceptors konnten nicht geladen werden - wird für Design-Time-Context ignoriert");
                 }
             });
-            // Identität und Authentifizierung
+            
+            // 11. Identity-Services
+            Log.Information("Konfiguriere Identity-Services...");
             builder.Services.AddIdentityServices(builder.Configuration);
+            _identityConfigured = true;
 
-            // GraphQL
+            // 12. GraphQL
+            Log.Information("Konfiguriere GraphQL-Services...");
             builder.Services.AddGraphQlServices(builder.Configuration);
 
-            // Swagger
+            // 13. Swagger
+            Log.Information("Konfiguriere Swagger...");
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerWithAuth(builder.Configuration);
 
-            // Messaging und Events
+            // 14. Messaging und Events
+            Log.Information("Konfiguriere Event-Bus...");
             builder.Services.AddSingleton<IEventBus, InMemoryEventBus>();
 
-            // Modulregistrierung
+            // 15. Module registrieren
+            Log.Information("Registriere und konfiguriere Module...");
             var moduleManager = new ModuleManager();
+            
+            Log.Information("Registriere Auth-Modul...");
             moduleManager.RegisterModule(new AuthModule(), moduleSettings.GetValueOrDefault("Auth", true));
+            
+            Log.Information("Registriere Users-Modul...");
             moduleManager.RegisterModule(new UsersModule(), moduleSettings.GetValueOrDefault("Users", true));
-
-            moduleManager.RegisterModule(new NotificationsModule(),
-                moduleSettings.GetValueOrDefault("Notifications", true));
+            
+            Log.Information("Registriere Notifications-Modul...");
+            moduleManager.RegisterModule(new NotificationsModule(), moduleSettings.GetValueOrDefault("Notifications", true));
+            
+            Log.Information("Konfiguriere Module-Services...");
             moduleManager.ConfigureServices(builder.Services, builder.Configuration);
 
-            // CORS
-            builder.Services.AddCors(options => {
+            // 16. CORS
+            Log.Information("Konfiguriere CORS...");
+            builder.Services.AddCors(options => 
+            {
                 options.AddPolicy("AllowSpecificOrigins",
                     policy => policy
                         .WithOrigins(
@@ -261,87 +341,148 @@ private static void ConfigureDatabaseOptions(IServiceProvider sp, DbContextOptio
                         .AllowCredentials());
             });
 
+            // 17. Application bauen
+            Log.Information("Baue Anwendung...");
             var app = builder.Build();
             Log.Information("Anwendung erfolgreich gebaut");
 
-            // Datenbank-Initialisierung
-            using (var scope = app.Services.CreateScope()) {
+            // 18. Datenbank migrieren
+            Log.Information("Initialisiere Datenbank...");
+            using (var scope = app.Services.CreateScope()) 
+            {
                 var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                 var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
-                try {
+                try 
+                {
                     logger.LogInformation("Migriere Datenbank...");
                     await dbContext.Database.MigrateAsync();
                     logger.LogInformation("Datenbank erfolgreich migriert");
+                    _databaseMigrated = true;
                 }
-                catch (Exception ex) {
+                catch (Exception ex) 
+                {
                     logger.LogError(ex, "Ein Fehler ist bei der Datenbankinitialisierung aufgetreten");
                     throw;
                 }
             }
 
-            // CORS-Middleware VOR allen anderen Middleware-Komponenten aktivieren (für alle Umgebungen)
+            // 19. Middleware konfigurieren
+            Log.Information("Konfiguriere Middleware-Pipeline...");
+            
+            // CORS-Middleware VOR allen anderen Middleware-Komponenten aktivieren
+            Log.Information("Aktiviere CORS...");
             app.UseCors("AllowSpecificOrigins");
 
-            // HTTP-Pipeline-Konfiguration
-            if (app.Environment.IsDevelopment()) {
+            // Umgebungsspezifische Middleware
+            Log.Information("Konfiguriere Umgebungsspezifische Middleware...");
+            if (app.Environment.IsDevelopment()) 
+            {
                 app.UseDeveloperExceptionPage();
+                Log.Information("Developer Exception Page aktiviert (Entwicklungsumgebung)");
             }
-            else if (app.Environment.IsProduction()) {
+            else if (app.Environment.IsProduction()) 
+            {
                 app.UseExceptionHandler("/Error");
                 app.UseHsts();
+                Log.Information("HSTS und Exception Handler aktiviert (Produktionsumgebung)");
 
-                // HTTPS-Weiterleitung aktivieren
+                // HTTPS-Weiterleitung für Produktion
+                Log.Information("Aktiviere HTTPS-Weiterleitung...");
                 app.UseHttpsRedirection();
 
-
-                // Weitergeleitete Header verarbeiten (z.B. hinter einem Reverse Proxy)
-                app.UseForwardedHeaders(new ForwardedHeadersOptions {
+                // Forwarded Headers für Reverse-Proxy
+                Log.Information("Konfiguriere Header-Weiterleitung für Reverse-Proxy...");
+                app.UseForwardedHeaders(new ForwardedHeadersOptions 
+                {
                     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
                 });
             }
 
+            // 20. Swagger
+            Log.Information("Aktiviere Swagger...");
             app.UseSwagger();
-
-            app.UseSwaggerUI(c => {
+            app.UseSwaggerUI(c => 
+            {
                 c.SwaggerEndpoint("/swagger/v1/swagger.json", "MultiTenant API v1");
                 c.RoutePrefix = "swagger";
             });
 
-            app.UseSerilogRequestLogging(options => {
-                options.MessageTemplate =
-                    "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
-
-                options.EnrichDiagnosticContext = (diagnosticContext, httpContext) => {
-                    if (httpContext.Request.Host.Value != null) {
+            // 21. Serilog Request Logging
+            Log.Information("Konfiguriere Request-Logging...");
+            app.UseSerilogRequestLogging(options => 
+            {
+                options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
+                options.EnrichDiagnosticContext = (diagnosticContext, httpContext) => 
+                {
+                    if (httpContext.Request.Host.Value != null) 
+                    {
                         diagnosticContext.Set("Host", httpContext.Request.Host.Value);
                     }
-
-                    diagnosticContext.Set("UserAgent",
-                        httpContext.Request.Headers["User-Agent"].FirstOrDefault() ?? string.Empty);
+                    diagnosticContext.Set("UserAgent", httpContext.Request.Headers["User-Agent"].FirstOrDefault() ?? string.Empty);
                 };
             });
 
+            // 22. Standard Middleware
+            Log.Information("Konfiguriere Standard-Middleware...");
             app.UseStaticFiles();
             app.UseSession();
             app.UseAuthentication();
             app.UseAuthorization();
+            
+            // 23. Routing & Controllers
+            Log.Information("Konfiguriere Endpunkte...");
             app.MapControllers();
             app.MapGraphQL().RequireCors("AllowSpecificOrigins");
             app.MapDetailedHealthChecks();
+            _controllersConfigured = true;
 
-            app.UseWebSockets(new WebSocketOptions {
+            // 24. WebSockets
+            Log.Information("Konfiguriere WebSockets...");
+            app.UseWebSockets(new WebSocketOptions 
+            {
                 KeepAliveInterval = TimeSpan.FromMinutes(2)
             });
+            _middlewareConfigured = true;
 
-            Log.Information("Starte Anwendung...");
-            await app.RunAsync();
+            // 25. Kestrel-Konfiguration überprüfen
+            Log.Information("Überprüfe Server-Konfiguration...");
+            var urls = app.Urls.ToList();
+            if (urls.Count == 0)
+            {
+                Log.Warning("WARNUNG: Keine URL für Kestrel konfiguriert. Die Anwendung wird möglicherweise nicht auf externe Anfragen hören.");
+                Log.Information("Setze Standard-URL für Kestrel auf http://0.0.0.0:8080");
+                app.Urls.Add("http://0.0.0.0:8080");
+            }
+            Log.Information("Server wird auf folgenden URLs lauschen: {Urls}", string.Join(", ", app.Urls));
+
+            // 26. Server starten
+            Log.Information("Starte Webserver...");
+            try
+            {
+                // RunAsync() durch Run() ersetzen für blockierenden Aufruf
+                await app.RunAsync();
+                // Diese Zeile wird nur erreicht, wenn der Server beendet wurde
+                Log.Information("Webserver ordnungsgemäß beendet");
+            }
+            catch (Exception ex)
+            {
+                Log.Fatal(ex, "Webserver unerwartet gestoppt");
+                throw;
+            }
         }
-        catch (Exception ex) {
+        catch (Exception ex) 
+        {
+            // Status-Tracking für Fehlerbehebung
+            Log.Fatal("Status-Tracking: DatabaseMigrated={0}, IdentityConfigured={1}, MiddlewareConfigured={2}, ControllersConfigured={3}", 
+                _databaseMigrated, _identityConfigured, _middlewareConfigured, _controllersConfigured);
+                
             Log.Fatal(ex, "Host wurde unerwartet beendet");
             throw;
         }
-        finally {
+        finally 
+        {
+            Log.Information("Anwendung wird beendet...");
             await Log.CloseAndFlushAsync();
         }
     }
