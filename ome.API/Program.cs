@@ -15,7 +15,6 @@ using ome.Infrastructure.Identity.Services;
 using ome.Infrastructure.Logging;
 using ome.Infrastructure.Modules;
 using ome.Infrastructure.Persistence.Context;
-using ome.Infrastructure.Persistence.Interceptors;
 using Serilog;
 using Serilog.Events;
 using Serilog.Sinks.SystemConsole.Themes;
@@ -58,7 +57,7 @@ public class Program
     }
 
     private static bool _isDatabaseConfigured;
-    private static readonly Lock LockObject = new Lock(); // Lock-Object wird als standard object implementiert
+    private static readonly Lock LockObject = new(); // Lock-Object wird als standard object implementiert
 
     private static void ConfigureDatabaseOptions(IServiceProvider sp, DbContextOptionsBuilder options) 
     {
@@ -154,59 +153,6 @@ public class Program
         }
     }
 
-    private static bool _interceptorsConfigured;
-    private static readonly Lock InterceptorLock = new();
-
-    private static void AddCustomInterceptors(IServiceProvider sp, DbContextOptionsBuilder options) 
-    {
-        // Only configure interceptors once using a lock and flag
-        lock (InterceptorLock)
-        {
-            if (_interceptorsConfigured)
-            {
-                return;
-            }
-
-            var logger = sp.GetRequiredService<ILogger<Program>>();
-            logger.LogInformation("Konfiguriere Datenbank-Interceptors...");
-        
-            try 
-            {
-                // Versuche die Services zu bekommen, aber akzeptiere wenn sie null sind
-                var auditInterceptor = sp.GetService<AuditSaveChangesInterceptor>();
-                var tenantInterceptor = sp.GetService<TenantSaveChangesInterceptor>();
-
-                if (auditInterceptor != null) 
-                {
-                    options.AddInterceptors(auditInterceptor);
-                    logger.LogInformation("Audit-Interceptor hinzugefügt");
-                }
-                else
-                {
-                    logger.LogWarning("Audit-Interceptor konnte nicht geladen werden");
-                }
-
-                if (tenantInterceptor != null) 
-                {
-                    options.AddInterceptors(tenantInterceptor);
-                    logger.LogInformation("Tenant-Interceptor hinzugefügt");
-                }
-                else
-                {
-                    logger.LogWarning("Tenant-Interceptor konnte nicht geladen werden");
-                }
-
-                logger.LogInformation("Interceptors erfolgreich konfiguriert");
-                _interceptorsConfigured = true;
-            }
-            catch (Exception ex) 
-            {
-                logger.LogWarning(ex, "Fehler bei der Konfiguration der Interceptors");
-                // Hier keine Exception werfen, damit die Migration durchlaufen kann
-            }
-        }
-    }
-
     public static async Task Main(string[] args) 
     {
         // Haupt-Logger für Console-Ausgaben vor der Konfiguration
@@ -283,26 +229,11 @@ public class Program
             builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
             builder.Services.AddScoped<IKeycloakService, KeycloakService>();
 
-            // 9. Interceptors
-            Log.Information("Registriere Datenbank-Interceptors...");
-            builder.Services.AddSingleton<AuditSaveChangesInterceptor>();
-            builder.Services.AddSingleton<TenantSaveChangesInterceptor>();
+            // 9. Interceptors - REMOVED
 
             // 10. DbContext konfigurieren
             Log.Information("Konfiguriere Datenbankkontext...");
-            builder.Services.AddDbContextFactory<ApplicationDbContext>((sp, options) => 
-            {
-                ConfigureDatabaseOptions(sp, options);
-
-                try 
-                {
-                    AddCustomInterceptors(sp, options);
-                }
-                catch (Exception ex) 
-                {
-                    Log.Warning(ex, "Interceptors konnten nicht geladen werden - wird für Design-Time-Context ignoriert");
-                }
-            });
+            builder.Services.AddDbContextFactory<ApplicationDbContext>(ConfigureDatabaseOptions);
             
             // 11. Identity-Services
             Log.Information("Konfiguriere Identity-Services...");
