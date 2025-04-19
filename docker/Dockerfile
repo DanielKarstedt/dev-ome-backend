@@ -1,7 +1,9 @@
 ﻿FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
 WORKDIR /app
 EXPOSE 8080
-EXPOSE 8081
+
+# Install wget for healthcheck
+RUN apt-get update && apt-get install -y wget
 
 # Add healthcheck using wget instead of curl
 HEALTHCHECK --interval=30s \
