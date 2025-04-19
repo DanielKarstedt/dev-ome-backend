@@ -229,7 +229,7 @@ public class Program
             builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
             builder.Services.AddScoped<IKeycloakService, KeycloakService>();
 
-            // 9. Interceptors - REMOVED
+            // 9. Interceptors - entfernt
 
             // 10. DbContext konfigurieren
             Log.Information("Konfiguriere Datenbankkontext...");

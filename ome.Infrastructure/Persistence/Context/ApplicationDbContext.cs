@@ -7,36 +7,20 @@ using ome.Core.Interfaces.Services;
 
 namespace ome.Infrastructure.Persistence.Context;
 
-public class ApplicationDbContext : DbContext 
-{
-    private readonly ICurrentUserService _currentUserService = null!;
-    private readonly ITenantService _tenantService = null!;
-    private readonly ILogger<ApplicationDbContext> _logger = null!;
+public class ApplicationDbContext(
+    DbContextOptions<ApplicationDbContext> options,
+    ICurrentUserService? currentUserService = null,
+    ITenantService? tenantService = null,
+    ILogger<ApplicationDbContext>? logger = null)
+    : DbContext(options) {
+    private readonly ICurrentUserService? _currentUserService = currentUserService;
 
     // DbSets
     public DbSet<User> Users { get; set; }
     public DbSet<UserRole> UserRoles { get; set; }
     public DbSet<Tenant> Tenants { get; set; }
 
-    // Constructor for dependency injection
-    public ApplicationDbContext(
-        DbContextOptions<ApplicationDbContext> options,
-        ICurrentUserService currentUserService,
-        ITenantService tenantService,
-        ILogger<ApplicationDbContext> logger)
-        : base(options)
-    {
-        _currentUserService = currentUserService;
-        _tenantService = tenantService;
-        _logger = logger;
-    }
-
-    // Optional constructor for design-time or manual creation
-    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
-        : base(options)
-    {
-        // Parameterless constructor for design-time scenarios
-    }
+    // Ein einziger Konstruktor mit optionalen Parametern
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -45,21 +29,24 @@ public class ApplicationDbContext : DbContext
         // Apply entity configurations from the assembly
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
 
-        // Apply tenant filtering for multi-tenant entities
-        foreach (var entityType in modelBuilder.Model.GetEntityTypes()
-                     .Where(e => typeof(TenantEntity).IsAssignableFrom(e.ClrType)))
+        // Apply tenant filtering for multi-tenant entities only if _tenantService is available
+        if (tenantService != null)
         {
-            var method = typeof(ApplicationDbContext)
-                .GetMethod(nameof(ApplyTenantFilter), 
-                    System.Reflection.BindingFlags.NonPublic | 
-                    System.Reflection.BindingFlags.Instance);
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes()
+                         .Where(e => typeof(TenantEntity).IsAssignableFrom(e.ClrType)))
+            {
+                var method = typeof(ApplicationDbContext)
+                    .GetMethod(nameof(ApplyTenantFilter), 
+                        System.Reflection.BindingFlags.NonPublic | 
+                        System.Reflection.BindingFlags.Instance);
 
-            if (method == null) {
-                continue;
+                if (method == null) {
+                    continue;
+                }
+
+                var genericMethod = method.MakeGenericMethod(entityType.ClrType);
+                genericMethod.Invoke(this, [modelBuilder]);
             }
-
-            var genericMethod = method.MakeGenericMethod(entityType.ClrType);
-            genericMethod.Invoke(this, [modelBuilder]);
         }
 
         // Apply soft delete filtering for base entities
@@ -85,8 +72,16 @@ public class ApplicationDbContext : DbContext
     {
         try 
         {
+            // Null-Check für _tenantService
+            if (tenantService == null)
+            {
+                // Wenn kein TenantService verfügbar ist, nur IsDeleted-Filter anwenden
+                modelBuilder.Entity<T>().HasQueryFilter(e => !e.IsDeleted);
+                return;
+            }
+
             // Try to get tenant ID from tenant service
-            var tenantId = _tenantService.GetCurrentTenantId();
+            var tenantId = tenantService.GetCurrentTenantId();
 
             modelBuilder.Entity<T>().HasQueryFilter(e => 
                 !e.IsDeleted && 
@@ -95,7 +90,8 @@ public class ApplicationDbContext : DbContext
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error applying tenant filter");
+            // Null-Check für _logger
+            logger?.LogError(ex, "Error applying tenant filter");
         }
     }
 
@@ -109,13 +105,17 @@ public class ApplicationDbContext : DbContext
     public override int SaveChanges()
     {
         try {
-            var tenantId = _tenantService.GetCurrentTenantId();
-
-            foreach (var entry in ChangeTracker.Entries<TenantEntity>())
+            // Null-Check für _tenantService
+            if (tenantService != null)
             {
-                if (entry.State == EntityState.Added && entry.Entity.TenantId == Guid.Empty)
+                var tenantId = tenantService.GetCurrentTenantId();
+
+                foreach (var entry in ChangeTracker.Entries<TenantEntity>())
                 {
-                    entry.Entity.TenantId = tenantId;
+                    if (entry.State == EntityState.Added && entry.Entity.TenantId == Guid.Empty)
+                    {
+                        entry.Entity.TenantId = tenantId;
+                    }
                 }
             }
 
@@ -123,7 +123,8 @@ public class ApplicationDbContext : DbContext
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during SaveChanges");
+            // Null-Check für _logger
+            logger?.LogError(ex, "Error during SaveChanges");
             throw;
         }
     }
@@ -133,13 +134,17 @@ public class ApplicationDbContext : DbContext
     {
         try 
         {
-            var tenantId = _tenantService.GetCurrentTenantId();
-
-            foreach (var entry in ChangeTracker.Entries<TenantEntity>())
+            // Null-Check für _tenantService
+            if (tenantService != null)
             {
-                if (entry.State == EntityState.Added && entry.Entity.TenantId == Guid.Empty)
+                var tenantId = tenantService.GetCurrentTenantId();
+
+                foreach (var entry in ChangeTracker.Entries<TenantEntity>())
                 {
-                    entry.Entity.TenantId = tenantId;
+                    if (entry.State == EntityState.Added && entry.Entity.TenantId == Guid.Empty)
+                    {
+                        entry.Entity.TenantId = tenantId;
+                    }
                 }
             }
 
@@ -147,7 +152,8 @@ public class ApplicationDbContext : DbContext
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during SaveChangesAsync");
+            // Null-Check für _logger
+            logger?.LogError(ex, "Error during SaveChangesAsync");
             throw;
         }
     }
