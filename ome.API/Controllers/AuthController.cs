@@ -46,7 +46,7 @@ public class AuthController(
             }
 
             // Use the exact callback URL format as in Keycloak client configuration
-            const string callbackUrl = "https://dev.api.officemadeeasy.eu/api/Auth/callback";
+            const string callbackUrl = "https://api.officemadeeasy.eu/api/Auth/callback";
             logger.LogInformation("Using fixed callback URL: {CallbackUrl}", callbackUrl);
 
             var authUrl = $"{baseUrl}/realms/{realm}/protocol/openid-connect/auth" +
@@ -108,7 +108,7 @@ public class AuthController(
             }
 
             // Fixed callback URL for token exchange
-            const string callbackUrl = "https://dev.api.officemadeeasy.eu/api/Auth/callback";
+            const string callbackUrl = "https://api.officemadeeasy.eu/api/Auth/callback";
             logger.LogDebug("Using fixed callback URL for token exchange: {CallbackUrl}", callbackUrl);
 
             // Attempt token exchange with detailed logging
