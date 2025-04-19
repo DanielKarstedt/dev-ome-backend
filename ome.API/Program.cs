@@ -154,43 +154,56 @@ public class Program
         }
     }
 
+    private static bool _interceptorsConfigured = false;
+    private static readonly object _interceptorLock = new object();
+
     private static void AddCustomInterceptors(IServiceProvider sp, DbContextOptionsBuilder options) 
     {
-        var logger = sp.GetRequiredService<ILogger<Program>>();
-        logger.LogInformation("Konfiguriere Datenbank-Interceptors...");
+        // Only configure interceptors once using a lock and flag
+        lock (_interceptorLock)
+        {
+            if (_interceptorsConfigured)
+            {
+                return;
+            }
+
+            var logger = sp.GetRequiredService<ILogger<Program>>();
+            logger.LogInformation("Konfiguriere Datenbank-Interceptors...");
         
-        try 
-        {
-            // Versuche die Services zu bekommen, aber akzeptiere wenn sie null sind
-            var auditInterceptor = sp.GetService<AuditSaveChangesInterceptor>();
-            var tenantInterceptor = sp.GetService<TenantSaveChangesInterceptor>();
+            try 
+            {
+                // Versuche die Services zu bekommen, aber akzeptiere wenn sie null sind
+                var auditInterceptor = sp.GetService<AuditSaveChangesInterceptor>();
+                var tenantInterceptor = sp.GetService<TenantSaveChangesInterceptor>();
 
-            if (auditInterceptor != null) 
-            {
-                options.AddInterceptors(auditInterceptor);
-                logger.LogInformation("Audit-Interceptor hinzugefügt");
-            }
-            else
-            {
-                logger.LogWarning("Audit-Interceptor konnte nicht geladen werden");
-            }
+                if (auditInterceptor != null) 
+                {
+                    options.AddInterceptors(auditInterceptor);
+                    logger.LogInformation("Audit-Interceptor hinzugefügt");
+                }
+                else
+                {
+                    logger.LogWarning("Audit-Interceptor konnte nicht geladen werden");
+                }
 
-            if (tenantInterceptor != null) 
-            {
-                options.AddInterceptors(tenantInterceptor);
-                logger.LogInformation("Tenant-Interceptor hinzugefügt");
-            }
-            else
-            {
-                logger.LogWarning("Tenant-Interceptor konnte nicht geladen werden");
-            }
+                if (tenantInterceptor != null) 
+                {
+                    options.AddInterceptors(tenantInterceptor);
+                    logger.LogInformation("Tenant-Interceptor hinzugefügt");
+                }
+                else
+                {
+                    logger.LogWarning("Tenant-Interceptor konnte nicht geladen werden");
+                }
 
-            logger.LogInformation("Interceptors erfolgreich konfiguriert");
-        }
-        catch (Exception ex) 
-        {
-            logger.LogWarning(ex, "Fehler bei der Konfiguration der Interceptors");
-            // Hier keine Exception werfen, damit die Migration durchlaufen kann
+                logger.LogInformation("Interceptors erfolgreich konfiguriert");
+                _interceptorsConfigured = true;
+            }
+            catch (Exception ex) 
+            {
+                logger.LogWarning(ex, "Fehler bei der Konfiguration der Interceptors");
+                // Hier keine Exception werfen, damit die Migration durchlaufen kann
+            }
         }
     }
 
