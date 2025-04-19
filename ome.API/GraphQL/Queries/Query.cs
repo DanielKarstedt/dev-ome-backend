@@ -11,7 +11,6 @@ namespace ome.API.GraphQL.Queries;
 /// </summary>
 [GraphQLDescription("Queries für die MultiTenant-Anwendung")]
 public class Query(ILogger<Query> logger) {
-
     // BENUTZER-QUERIES
 
     [GraphQLDescription("Gibt einen Benutzer anhand seiner ID zurück")]
@@ -59,8 +58,7 @@ public class Query(ILogger<Query> logger) {
         [Service] ICurrentUserService currentUserService) {
         logger.LogInformation("Query: GetCurrentUser für Benutzer {UserId}", currentUserService.UserId);
 
-        if (currentUserService.IsAuthenticated)
-        {
+        if (currentUserService.IsAuthenticated) {
             return dbContext.Users
                 .Where(u => u.KeycloakId == currentUserService.UserId)
                 .Include(u => u.Roles);
@@ -68,7 +66,6 @@ public class Query(ILogger<Query> logger) {
 
         logger.LogWarning("Nicht authentifizierter Benutzer versucht, GetCurrentUser abzurufen");
         throw new UnauthorizedAccessException("Sie müssen angemeldet sein, um auf diese Ressource zuzugreifen.");
-
     }
 
     // TENANT-QUERIES
@@ -93,8 +90,7 @@ public class Query(ILogger<Query> logger) {
         logger.LogInformation("Query: GetTenantById für ID {TenantId}", id);
 
         // Berechtigungsprüfung: Nur Administratoren dürfen auf Tenant-Informationen zugreifen
-        if (currentUserService.IsInRole("OmeAdmin"))
-        {
+        if (currentUserService.IsInRole("OmeAdmin")) {
             return (await dbContext.Tenants
                 .AsNoTracking()
                 .FirstOrDefaultAsync(t => t.Id == id && !t.IsDeleted, cancellationToken))!;
@@ -105,7 +101,6 @@ public class Query(ILogger<Query> logger) {
 
         throw new UnauthorizedAccessException(
             "Sie haben keine Berechtigung, auf Tenant-Informationen zuzugreifen.");
-
     }
 
     [GraphQLDescription("Gibt alle Tenants zurück (nur für Administratoren)")]
@@ -118,8 +113,7 @@ public class Query(ILogger<Query> logger) {
         logger.LogInformation("Query: GetTenants durch Benutzer {UserId}", currentUserService.UserId);
 
         // Berechtigungsprüfung: Nur Administratoren dürfen auf Tenant-Informationen zugreifen
-        if (!currentUserService.IsInRole("OmeAdmin"))
-        {
+        if (!currentUserService.IsInRole("OmeAdmin")) {
             logger.LogWarning("Unbefugter Zugriff auf GetTenants durch Benutzer {UserId}", currentUserService.UserId);
 
             throw new UnauthorizedAccessException(
@@ -129,5 +123,64 @@ public class Query(ILogger<Query> logger) {
         return dbContext.Tenants
             .Where(t => !t.IsDeleted)
             .AsNoTracking();
+    }
+
+    // ROLLEN-QUERIES
+
+    [GraphQLDescription("Gibt alle Benutzerrollen für den aktuellen Tenant zurück")]
+    [UsePaging]
+    [UseProjection]
+    [HotChocolate.Data.UseFiltering]
+    [HotChocolate.Data.UseSorting]
+    public IQueryable<UserRole> GetRoles(
+        [Service] ApplicationDbContext dbContext,
+        [Service] ICurrentUserService currentUserService) {
+        logger.LogInformation("Query: GetRoles für Tenant {TenantId}", currentUserService.TenantId);
+
+        var tenantId = currentUserService.TenantId;
+
+        return dbContext.UserRoles
+            .Where(r => r.TenantId == tenantId);
+    }
+
+    [GraphQLDescription("Gibt eine Benutzerrolle anhand ihrer ID zurück")]
+    [UseFirstOrDefault]
+    [UseProjection]
+    [HotChocolate.Data.UseFiltering]
+    [HotChocolate.Data.UseSorting]
+    public IQueryable<UserRole> GetRoleById(
+        [Service] ApplicationDbContext dbContext,
+        [Service] ICurrentUserService currentUserService,
+        Guid id) {
+        logger.LogInformation("Query: GetRoleById für ID {RoleId}", id);
+
+        var tenantId = currentUserService.TenantId;
+
+        return dbContext.UserRoles
+            .Where(r => r.Id == id && r.TenantId == tenantId);
+    }
+
+    [GraphQLDescription("Gibt die Benutzerrollen des aktuellen Benutzers zurück")]
+    [UsePaging]
+    [UseProjection]
+    [HotChocolate.Data.UseFiltering]
+    [HotChocolate.Data.UseSorting]
+    public IQueryable<UserRole> GetCurrentUserRoles(
+        [Service] ApplicationDbContext dbContext,
+        [Service] ICurrentUserService currentUserService) {
+        logger.LogInformation("Query: GetCurrentUserRoles für Benutzer {UserId}", currentUserService.UserId);
+
+        if (!currentUserService.IsAuthenticated) {
+            logger.LogWarning("Nicht authentifizierter Benutzer versucht, GetCurrentUserRoles abzurufen");
+            throw new UnauthorizedAccessException("Sie müssen angemeldet sein, um auf diese Ressource zuzugreifen.");
+        }
+
+        var userId = currentUserService.UserId;
+        var tenantId = currentUserService.TenantId;
+
+        return from user in dbContext.Users
+            join userRole in dbContext.UserRoles on user.Id equals userRole.UserId
+            where user.KeycloakId == userId && userRole.TenantId == tenantId
+            select userRole;
     }
 }

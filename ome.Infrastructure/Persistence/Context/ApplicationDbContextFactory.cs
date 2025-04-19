@@ -1,13 +1,44 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using ome.Core.Interfaces.Services;
+using ome.Core.Domain.Entities.Tenants;
 
 namespace ome.Infrastructure.Persistence.Context;
 
-public class ApplicationDbContextFactory : IDesignTimeDbContextFactory<ApplicationDbContext>
-{
-    public ApplicationDbContext CreateDbContext(string[] args)
-    {
+// Implementierung des ITenantService für Design-Time
+public class DesignTimeTenantService : ITenantService {
+    public Guid GetCurrentTenantId() => Guid.Empty;
+
+    public void SetCurrentTenantId(Guid tenantId) {
+        // Design-Time-Implementation: nichts tun
+    }
+
+    public Task<Tenant?> GetCurrentTenantAsync(CancellationToken cancellationToken = default) {
+        // Rückgabe eines null Tenants für Design-Time
+        return Task.FromResult<Tenant?>(null);
+    }
+
+    public Task<string?> GetConnectionStringAsync(Guid tenantId, CancellationToken cancellationToken = default) {
+        // Rückgabe eines null ConnectionStrings für Design-Time
+        return Task.FromResult<string?>(null);
+    }
+
+    public Task<bool> TenantExistsAsync(Guid tenantId, CancellationToken cancellationToken = default) {
+        // Für Design-Time: Tenant existiert immer
+        return Task.FromResult(true);
+    }
+
+    public Task<bool> InitializeTenantContextAsync(string companyId, CancellationToken cancellationToken = default) {
+        // Für Design-Time: Initialisierung immer erfolgreich
+        return Task.FromResult(true);
+    }
+}
+
+public class ApplicationDbContextFactory : IDesignTimeDbContextFactory<ApplicationDbContext> {
+    // Rest des Codes bleibt unverändert
+    public ApplicationDbContext CreateDbContext(string[] args) {
         // Build configuration
         var configuration = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
@@ -19,8 +50,7 @@ public class ApplicationDbContextFactory : IDesignTimeDbContextFactory<Applicati
         // Configure DbContext options
         var connectionString = configuration.GetConnectionString("DefaultConnection");
 
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
+        if (string.IsNullOrWhiteSpace(connectionString)) {
             throw new InvalidOperationException("Connection string 'DefaultConnection' is missing or empty.");
         }
 
@@ -59,6 +89,10 @@ public class ApplicationDbContextFactory : IDesignTimeDbContextFactory<Applicati
         optionsBuilder.EnableDetailedErrors();
 
         // Use the constructor that takes only DbContextOptions
-        return new ApplicationDbContext(optionsBuilder.Options);
+        return new ApplicationDbContext(
+            optionsBuilder.Options,
+            new DesignTimeTenantService(),
+            NullLogger<ApplicationDbContext>.Instance
+        );
     }
 }
